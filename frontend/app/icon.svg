@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="PTMatch">
+  <!--
+    Favicon PTMatch. Next tự phục vụ file này tại /icon.svg và tự chèn thẻ
+    <link rel="icon"> vào mọi trang (quy ước app/icon.* của App Router).
+
+    Hình tạ đôi rút gọn còn ba khối. Tỉ lệ ở đây được chọn sau khi render thử ở
+    đúng 16px: bản đầu có đòn dày và bánh cao nên ở kích thước tab nó đọc thành
+    chữ "H". Đòn mảnh (cao 2) cộng bánh thấp và bo tròn mạnh (r=2.5) mới giữ
+    được dáng tạ khi thu nhỏ.
+
+    Màu emerald-600 (#059669) trùng màu chủ đạo của site (btn-primary,
+    text-emerald-600) để icon tab và giao diện nhận ra là cùng một sản phẩm.
+
+    Sửa hình ở đây thì phải sinh lại app/favicon.ico cho khớp — xem
+    scripts/gen-favicon.py.
+  -->
+  <rect width="32" height="32" rx="7" fill="#059669"/>
+  <g fill="#ffffff">
+    <!-- Đòn tạ -->
+    <rect x="11" y="15" width="10" height="2" rx="1"/>
+    <!-- Hai bánh tạ -->
+    <rect x="4.5" y="11" width="6.5" height="10" rx="2.5"/>
+    <rect x="21" y="11" width="6.5" height="10" rx="2.5"/>
+  </g>
+</svg>

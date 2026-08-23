@@ -1,0 +1,114 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ptmatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ptmatch_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-ptmatch}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Mặc định 127.0.0.1, KHÔNG phải 0.0.0.0: nếu ai chạy nhầm stack dev này
+      # trên máy có IP công khai, Postgres (mật khẩu dev cố định) không được lộ
+      # thẳng ra ngoài — Docker tự thêm rule iptables cho cổng publish, bỏ qua ufw.
+      #
+      # DB_BIND_HOST / DB_HOST_PORT là van thoát cho WSL2: service port-forward
+      # của Windows (svchost/winnat) có thể còn giữ reservation cổng 5432 của
+      # container cũ, và khi đó MỌI cách bind cổng đó đều bị từ chối ("socket
+      # ... forbidden by its access permissions" / "Only one usage of each
+      # socket address"). Cách sửa gốc là `net stop winnat && net start winnat`
+      # (cần admin) hoặc reboot; đổi DB_HOST_PORT trong .env là cách đi tiếp mà
+      # không phải sửa file này và không phải hạ bind về 0.0.0.0.
+      #
+      # Cổng đổi chỉ ảnh hưởng phía host (GUI/psql từ máy). Trong compose
+      # network backend vẫn nối db:5432 như thường.
+      - "${DB_BIND_HOST:-127.0.0.1}:${DB_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ptmatch} -d ${POSTGRES_DB:-ptmatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # KHÔNG publish ra host. Redis dev không có auth, và không có gì cần chạm
+    # tới nó từ host: backend gọi qua network nội bộ của compose
+    # (redis://redis:6379), test chạy bằng `docker compose exec backend pytest`
+    # nên cũng ở trong network đó. Publish chỉ tạo thêm một cửa mở.
+    #
+    # Cần soi Redis thì vào bằng:  docker compose exec redis redis-cli
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ptmatch}:${POSTGRES_PASSWORD:-ptmatch_secret}@db:5432/${POSTGRES_DB:-ptmatch}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      ENVIRONMENT: development
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      UVICORN_RELOAD: "true"
+    volumes:
+      - ./backend:/app
+      - media_data:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # Hộp thư giả cho môi trường dev.
+  #
+  # Kênh thông báo lead đi qua SMTP thật, mà không ai muốn gửi thư thật khi đang
+  # thử. Mailpit nhận mọi thư rồi giữ lại để xem ở http://localhost:8025 — nhờ
+  # vậy kiểm chứng được trọn đường ống (tạo lead -> soạn thư -> gửi) trước khi
+  # trả tiền cho nhà cung cấp nào.
+  #
+  # CHỈ có ở stack dev. docker-compose.prod.yml dùng SMTP thật.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # giao diện web
+      - "1025:1025"   # cổng SMTP
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      # Mặc định trống: trình duyệt gọi /api cùng origin, Next rewrite xuống
+      # backend. Đặt giá trị chỉ khi API nằm ở domain khác.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      API_INTERNAL_URL: http://backend:8000
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      # Cổng host đổi được: máy dev này chạy nhiều project, và 3000 là cổng ai
+      # cũng lấy — trùng cổng thì container chỉ exit kèm "port is already
+      # allocated", không nói rõ ai đang giữ. Đặt FRONTEND_HOST_PORT trong .env.
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  media_data:

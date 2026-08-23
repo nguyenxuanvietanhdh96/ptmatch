@@ -1,0 +1,130 @@
+# =============================================================================
+# PTMatch — Cloud Build CI/CD
+#
+# Trigger: push lên branch main.
+# Flow: backend tests -> build images -> push Artifact Registry -> SSH deploy.
+#
+# Yêu cầu trước khi chạy:
+#   - Artifact Registry repo: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}
+#   - Cloud Build SA có roles: artifactregistry.writer, compute.instanceAdmin.v1
+#     (hoặc compute.osLogin) + iam.serviceAccountUser để SSH vào instance.
+#   - Instance đã chạy scripts/setup-server.sh (code tại /opt/ptmatch).
+# =============================================================================
+
+substitutions:
+  _REGION: asia-southeast1
+  _ZONE: asia-southeast1-b
+  _INSTANCE: ptmatch-prod
+  _REPO: ptmatch
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
+
+steps:
+  # ---- 1. Backend tests -------------------------------------------------------
+  # Suite gồm test tích hợp chạy trên PostgreSQL thật (schema dùng JSONB,
+  # generated tsvector, hàm ptmatch_unaccent) + Redis cho rate limit và
+  # revoke token, nên cần dựng hai service trên network `cloudbuild`.
+  - id: backend-tests
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        trap 'docker rm -f ptmatch-test-db ptmatch-test-redis >/dev/null 2>&1 || true' EXIT
+
+        docker run -d --name ptmatch-test-db --network cloudbuild \
+          -e POSTGRES_USER=ptmatch \
+          -e POSTGRES_PASSWORD=ptmatch_secret \
+          -e POSTGRES_DB=ptmatch \
+          postgres:16-alpine
+        docker run -d --name ptmatch-test-redis --network cloudbuild redis:7-alpine
+
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+          if docker exec ptmatch-test-db pg_isready -U ptmatch -q; then break; fi
+          sleep 2
+        done
+
+        docker build -t ptmatch-backend-test ./backend
+        docker run --rm --network cloudbuild \
+          -e DATABASE_URL=postgresql+asyncpg://ptmatch:ptmatch_secret@ptmatch-test-db:5432/ptmatch \
+          -e REDIS_URL=redis://ptmatch-test-redis:6379/0 \
+          ptmatch-backend-test pytest -q
+
+  # ---- 2. Build backend image ------------------------------------------------
+  # `--cache-from` + pull ảnh :latest trước: không có nó, mỗi commit (kể cả commit
+  # chỉ sửa tài liệu) đều cài lại toàn bộ dependency và chạy lại `next build` từ
+  # số không, tốn cả phút build lẫn tiền.
+  # `|| true` vì lần build đầu tiên chưa có :latest để pull.
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend
+        docker pull "$$IMAGE:latest" || true
+        # BUILDKIT_INLINE_CACHE nhúng metadata cache vào chính ảnh đẩy lên, nhờ
+        # đó lần build sau `--cache-from` dùng lại được cả các stage trung gian
+        # chứ không chỉ layer cuối.
+        DOCKER_BUILDKIT=1 docker build \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --cache-from "$$IMAGE:latest" \
+          -t "$$IMAGE:$SHORT_SHA" \
+          -t "$$IMAGE:latest" \
+          ./backend
+    waitFor: [backend-tests]
+
+  # ---- 3. Build frontend image -----------------------------------------------
+  # Biến NEXT_PUBLIC_* lấy từ frontend/.env.production (Next tự đọc lúc build).
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/frontend
+        docker pull "$$IMAGE:latest" || true
+        DOCKER_BUILDKIT=1 docker build \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --cache-from "$$IMAGE:latest" \
+          -t "$$IMAGE:$SHORT_SHA" \
+          -t "$$IMAGE:latest" \
+          ./frontend
+    waitFor: ['-']
+
+  # ---- 4. Push images lên Artifact Registry -----------------------------------
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend
+    waitFor: [build-backend]
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/frontend
+    waitFor: [build-frontend]
+
+  # ---- 5. Deploy: SSH vào GCE, chạy deploy.sh với IMAGE_TAG -------------------
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        gcloud compute ssh ${_INSTANCE} \
+          --zone=${_ZONE} \
+          --tunnel-through-iap \
+          --command="cd /opt/ptmatch && sudo IMAGE_TAG=$SHORT_SHA GCP_PROJECT_ID=$PROJECT_ID bash scripts/deploy.sh"
+    waitFor: [push-backend, push-frontend]

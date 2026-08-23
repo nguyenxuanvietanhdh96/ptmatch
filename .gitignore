@@ -1,0 +1,41 @@
+# Env & secrets
+.env
+*.pem
+*.key
+credentials*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+npm-debug.log*
+
+# Terraform / Terragrunt
+.terraform/
+# .terraform.lock.hcl PHẢI được commit — đó là lockfile ghim chính xác phiên bản
+# provider. Bỏ qua nó nghĩa là mỗi máy và mỗi lần chạy CI có thể dùng một bản
+# provider google khác nhau (constraint "~> 5.0" nhận mọi 5.x), nên bản plan đã
+# review và bản apply thật có thể không cùng hành vi.
+.terragrunt-cache/
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# Media & data (dev)
+media/
+certbot/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

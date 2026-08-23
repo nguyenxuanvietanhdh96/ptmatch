@@ -1,0 +1,16 @@
+# Giữ build context gọn: mọi thứ ở đây đều được gửi sang Docker daemon mỗi lần
+# build, và `media/` trên máy dev có thể lên tới hàng trăm MB ảnh tải thử.
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+media
+*.log
+.env
+.env.*
+.git
+Dockerfile
+.dockerignore
