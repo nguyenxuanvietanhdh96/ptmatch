@@ -14,12 +14,15 @@
 # chặng THÊM khi DEPLOY_MODE=pull.
 #
 # Chạy trên server. Cài cron daily 2AM (setup-server.sh đã tự cài):
-#   0 2 * * * root /opt/ptmatch/scripts/backup-db.sh >> /var/log/ptmatch-backup.log 2>&1
+#   0 2 * * * root <APP_DIR>/scripts/backup-db.sh >> /var/log/ptmatch-backup.log 2>&1
 # =============================================================================
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/ptmatch}"
-COMPOSE_FILE="docker-compose.prod.yml"
+# APP_DIR suy từ vị trí của chính script này (scripts/ nằm ngay dưới thư mục
+# repo), nên deploy chạy đúng dù code đặt ở /opt/ptmatch hay chỗ khác — không
+# còn đường dẫn cứng nào phải nhớ sửa. Env vẫn ghi đè được nếu cần.
+APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+COMPOSE_FILE="docker-compose.yml"
 BACKUP_DIR="${BACKUP_DIR:-${APP_DIR}/backups/postgres}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 MIN_BYTES="${MIN_BACKUP_BYTES:-1024}"

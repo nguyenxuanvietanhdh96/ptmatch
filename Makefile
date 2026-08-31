@@ -1,9 +1,15 @@
-.PHONY: dev up down logs seed migrate test build-prod
+.PHONY: dev-init dev up down logs seed migrate test build-prod
 
-dev: ## Chạy full stack dev (build + up)
+# ./media là BIND MOUNT dùng chung dev/prod. Để Docker tự tạo thì thư mục thuộc
+# root, còn container chạy uid 1000 (appuser, backend/Dockerfile) -> upload ảnh
+# lỗi permission. Tạo trước bằng user hiện tại là xong.
+dev-init:
+	@mkdir -p media
+
+dev: dev-init ## Chạy full stack dev (build + up)
 	docker compose up --build
 
-up:
+up: dev-init
 	docker compose up -d
 
 down:
@@ -21,9 +27,9 @@ migrate: ## Chạy alembic migration
 test:
 	docker compose exec backend pytest
 
-# docker-compose.prod.yml cố tình không khai báo `build:` (xem ghi chú trong
-# file đó), nên build ảnh production phải gọi docker build trực tiếp — giống
-# hệt cách cloudbuild.yaml làm.
+# `docker compose build` trên máy dev sẽ build target `dev` (do override), nên
+# muốn thử ảnh production tại chỗ thì gọi docker build trực tiếp — giống hệt
+# cách cloudbuild.yaml làm.
 build-prod: ## Build thử ảnh production tại máy (CI mới là nơi build thật)
 	docker build -t ptmatch-backend:latest ./backend
-	docker build -t ptmatch-frontend:latest ./frontend
+	docker build --target runner -t ptmatch-frontend:latest ./frontend

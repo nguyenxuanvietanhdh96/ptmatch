@@ -8,7 +8,7 @@
 #   - Artifact Registry repo: ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}
 #   - Cloud Build SA có roles: artifactregistry.writer, compute.instanceAdmin.v1
 #     (hoặc compute.osLogin) + iam.serviceAccountUser để SSH vào instance.
-#   - Instance đã chạy scripts/setup-server.sh (code tại /opt/ptmatch).
+#   - Instance đã chạy scripts/setup-server.sh (code tại ${_APP_DIR}).
 # =============================================================================
 
 substitutions:
@@ -16,6 +16,8 @@ substitutions:
   _ZONE: asia-southeast1-b
   _INSTANCE: ptmatch-prod
   _REPO: ptmatch
+  # Thư mục chứa code trên GCE instance (setup-server.sh đã clone vào đây).
+  _APP_DIR: /var/www/html/ptmatch
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -126,5 +128,5 @@ steps:
         gcloud compute ssh ${_INSTANCE} \
           --zone=${_ZONE} \
           --tunnel-through-iap \
-          --command="cd /opt/ptmatch && sudo IMAGE_TAG=$SHORT_SHA GCP_PROJECT_ID=$PROJECT_ID bash scripts/deploy.sh"
+          --command="cd ${_APP_DIR} && sudo IMAGE_TAG=$SHORT_SHA GCP_PROJECT_ID=$PROJECT_ID bash scripts/deploy.sh"
     waitFor: [push-backend, push-frontend]

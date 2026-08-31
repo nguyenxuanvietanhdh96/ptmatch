@@ -14,8 +14,16 @@
 # =============================================================================
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/ptmatch}"
-COMPOSE_FILE="docker-compose.prod.yml"
+# APP_DIR suy từ vị trí của chính script này (scripts/ nằm ngay dưới thư mục
+# repo), nên deploy chạy đúng dù code đặt ở /opt/ptmatch hay chỗ khác — không
+# còn đường dẫn cứng nào phải nhớ sửa. Env vẫn ghi đè được nếu cần.
+APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Tường minh `-f docker-compose.yml` chứ không để Compose tự nạp: khi có `-f`,
+# Compose KHÔNG merge docker-compose.override.yml. Nhờ vậy một file override dev
+# bỏ quên trên server cũng không lọt được vào production.
+COMPOSE_FILE="docker-compose.yml"
+# nginx mang `profiles: ["prod"]` trong base nên chỉ lên khi profile này bật.
+export COMPOSE_PROFILES=prod
 IMAGE_TAG="${IMAGE_TAG:-}"
 AR_REGION="${AR_REGION:-asia-southeast1}"
 AR_REPO="${AR_REPO:-ptmatch}"
@@ -27,6 +35,13 @@ cd "${APP_DIR}"
 if [[ ! -f .env ]]; then
   echo "Thiếu ${APP_DIR}/.env — chạy scripts/setup-server.sh trước." >&2
   exit 1
+fi
+
+# Chặn deploy khi .env còn placeholder (mật khẩu DB dev, SECRET_KEY mẫu,
+# SITE_URL localhost). Xem lý do file này tồn tại ở đầu lib-require-env.sh.
+source "${APP_DIR}/scripts/lib-require-env.sh"
+if [[ "${SKIP_ENV_CHECK:-0}" != "1" ]]; then
+  require_prod_env || exit 1
 fi
 
 # ---- Backup trước khi áp migration mới -------------------------------------
@@ -79,7 +94,7 @@ fi
 #   build            — build ngay trên server từ code trong ${APP_DIR}. Dùng khi
 #                      chỉ có một server và không có registry (VPS/Oracle).
 #
-# Vì sao phải tường minh: docker-compose.prod.yml khai báo cả `image:` lẫn
+# Vì sao phải tường minh: docker-compose.yml khai báo cả `image:` lẫn
 # `build:`. Nếu để Compose tự xử, `pull` sẽ âm thầm bỏ qua service buildable rồi
 # `up` build lại từ code cũ trên server — deploy báo thành công trong khi chạy
 # code cũ. `--no-build` ở chế độ pull là thứ chặn đúng việc đó.
@@ -100,7 +115,7 @@ case "${DEPLOY_MODE}" in
     fi
     # `next build` chạy NGAY TRONG bước `docker compose build` dưới đây, không
     # phải trong container đã lên — mem_limit đặt cho service frontend trong
-    # docker-compose.prod.yml KHÔNG che được giai đoạn này. Trên máy 2GB không
+    # docker-compose.yml KHÔNG che được giai đoạn này. Trên máy 2GB không
     # có swap, OOM killer có thể hạ Postgres (đang chạy song song) giữa lúc
     # build, và service bị hạ không nhất thiết là frontend.
     if ! swapon --show 2>/dev/null | grep -q .; then

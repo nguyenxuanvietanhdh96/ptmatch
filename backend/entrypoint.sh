@@ -23,7 +23,7 @@ fi
 # proxy, so without trusting X-Forwarded-For the whole site would share a single
 # bucket — one user could lock everyone out of /api/auth/login.
 # FORWARDED_ALLOW_IPS chỉ nên mở ("*") khi backend không expose ra ngoài, chỉ
-# nginx nội bộ gọi tới (đúng với docker-compose.prod.yml).
+# nginx nội bộ gọi tới (đúng với docker-compose.yml).
 UVICORN_ARGS="--host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips ${FORWARDED_ALLOW_IPS:-127.0.0.1}"
 if [ "$UVICORN_RELOAD" = "true" ]; then
   UVICORN_ARGS="$UVICORN_ARGS --reload"

@@ -54,7 +54,7 @@ Terragrunt tự resolve khi chạy `run-all`.
    ```bash
    gcloud compute ssh ptmatch-dev --zone=asia-southeast1-b
    DOMAIN=dev.ptmatch.vn CERTBOT_EMAIL=you@example.com REPO_URL=<git-url> \
-     sudo -E bash /opt/ptmatch/scripts/setup-server.sh
+     sudo -E bash <APP_DIR>/scripts/setup-server.sh
    ```
 
 6. **DNS**: zone `ptmatch.vn` chỉ tạo ở prod (`create_dns_zone = true`).

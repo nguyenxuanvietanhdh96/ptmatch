@@ -1,0 +1,117 @@
+# =============================================================================
+# Máy DEV. Compose tự nạp file này khi gõ `docker compose` KHÔNG kèm `-f`.
+#
+#   local  ->  docker compose up            = base + file này  (dev)
+#   server ->  scripts/deploy.sh            = -f docker-compose.yml --profile prod
+#
+# File này NẰM TRONG GIT nên clone xong là chạy được, không phải copy gì.
+# Nó cũng có mặt trên server — vô hại, vì mọi lệnh phía server đều truyền `-f`
+# tường minh, và khi có `-f` thì Compose KHÔNG merge file override (đã kiểm
+# chứng bằng `docker compose config`). Lớp thứ hai: .env trên server đặt
+# COMPOSE_FILE=docker-compose.yml nên lệnh gõ tay cũng không dính.
+#
+# Ở đây chỉ ghi PHẦN KHÁC so với docker-compose.yml. Lưu ý Compose không cho
+# XOÁ service trong file override — nginx được loại khỏi dev bằng
+# `profiles: ["prod"]` trong base, không phải bằng file này.
+# =============================================================================
+services:
+  db:
+    restart: "no"
+    ports:
+      # Mặc định 127.0.0.1, KHÔNG phải 0.0.0.0: nếu lỡ chạy stack này trên máy
+      # có IP công khai, Postgres (mật khẩu dev cố định) không được lộ thẳng ra
+      # ngoài — Docker tự thêm rule iptables cho cổng publish, bỏ qua ufw.
+      #
+      # DB_BIND_HOST / DB_HOST_PORT là van thoát cho WSL2: service port-forward
+      # của Windows (svchost/winnat) có thể còn giữ reservation cổng 5432 của
+      # container cũ, và khi đó MỌI cách bind cổng đó đều bị từ chối ("socket
+      # ... forbidden by its access permissions"). Cách sửa gốc là
+      # `net stop winnat && net start winnat` (cần admin) hoặc reboot; đổi
+      # DB_HOST_PORT trong .env là cách đi tiếp mà không phải sửa file này.
+      #
+      # Cổng đổi chỉ ảnh hưởng phía host (GUI/psql). Trong network compose
+      # backend vẫn nối db:5432 như thường.
+      - "${DB_BIND_HOST:-127.0.0.1}:${DB_HOST_PORT:-5432}:5432"
+    healthcheck:
+      # Nhanh hơn prod: ở dev thời gian chờ stack sẵn sàng mới là thứ đáng tiếc.
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    restart: "no"
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    restart: "no"
+    # next dev / uvicorn reload ngốn hơn bản build; nâng trần để OOM killer
+    # không hạ container giữa lúc đang sửa code.
+    mem_limit: 1g
+    environment:
+      # Ghi đè `production` của base. Nhờ dòng này mà ba guard hard-fail trong
+      # app/core/config.py (SECRET_KEY yếu, GCS thiếu bucket, NOTIFY_CHANNELS
+      # chỉ có log) KHÔNG chạy ở dev — đúng ý: dev clone xong là chạy được.
+      ENVIRONMENT: development
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      UVICORN_RELOAD: "true"
+    volumes:
+      # Mount code để uvicorn --reload thấy thay đổi ngay. Base đã mount
+      # ./media:/app/media (target khác, nên cả hai cùng tồn tại).
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    healthcheck:
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  frontend:
+    restart: "no"
+    mem_limit: 2g
+    build:
+      # Base dùng target `runner` (bản build tối ưu). Dev cần `dev` để có HMR.
+      target: dev
+    volumes:
+      - ./frontend:/app
+      # Hai dòng này che node_modules/.next của host: chúng được cài/ghi trong
+      # image cho đúng nền tảng của container, không phải của máy host.
+      - /app/node_modules
+      - /app/.next
+    ports:
+      # Cổng host đổi được: máy dev chạy nhiều project, và 3000 là cổng ai cũng
+      # lấy — trùng cổng thì container chỉ exit kèm "port is already allocated",
+      # không nói rõ ai đang giữ. Đặt FRONTEND_HOST_PORT trong .env.
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    healthcheck:
+      start_period: 20s
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Hộp thư giả — CHỈ có ở dev (service này không tồn tại trong base).
+  #
+  # Kênh thông báo lead đi qua SMTP thật, mà không ai muốn gửi thư thật khi đang
+  # thử. Mailpit nhận mọi thư rồi giữ lại để xem ở http://localhost:8025 — nhờ
+  # vậy kiểm chứng được trọn đường ống (tạo lead -> soạn thư -> gửi) trước khi
+  # trả tiền cho nhà cung cấp nào.
+  #
+  # Muốn dùng: trong .env đặt SMTP_HOST=mailpit, SMTP_PORT=1025,
+  # SMTP_USE_TLS=false, NOTIFY_CHANNELS=email,log rồi `docker compose up -d backend`.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: "no"
+    ports:
+      - "8025:8025"   # giao diện web
+      - "1025:1025"   # cổng SMTP
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1

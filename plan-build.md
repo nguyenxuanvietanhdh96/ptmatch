@@ -375,7 +375,7 @@ ptmatch/
 │   ├── backup-db.sh              # PostgreSQL backup -> GCS
 │   └── setup-server.sh           # Initial GCE setup
 ├── docker-compose.yml            # Dev environment
-├── docker-compose.prod.yml       # Production overrides
+├── docker-compose.override.yml.example  # Dev overrides (base = prod)
 ├── cloudbuild.yaml               # CI/CD pipeline
 └── README.md
 ```

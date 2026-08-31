@@ -22,7 +22,7 @@ Yêu cầu: Docker + Docker Compose.
 
 ```bash
 cp .env.example .env        # chỉnh nếu cần, default chạy được ngay
-docker compose up --build   # hoặc: make dev
+make dev                    # = mkdir media + docker compose up --build
 make seed                   # tạo dữ liệu demo (9 PT, reviews, leads)
 ```
 
@@ -62,7 +62,8 @@ ptmatch/
 ├── nginx/             # Nginx config cho production (reverse proxy + SSL)
 ├── scripts/           # setup-server.sh, deploy.sh, backup-db.sh
 ├── docker-compose.yml          # Dev stack (hot reload)
-├── docker-compose.prod.yml     # Production stack (chạy trên GCE)
+├── docker-compose.yml          # Base stack = PRODUCTION (server dùng file này)
+├── docker-compose.override.yml # Máy dev (Compose tự nạp khi không có -f)
 └── cloudbuild.yaml             # CI/CD pipeline
 ```
 

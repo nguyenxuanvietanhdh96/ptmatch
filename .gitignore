@@ -1,5 +1,11 @@
 # Env & secrets
 .env
+# .env-prod / .env.local... — mọi biến thể đều là file thật có secret.
+# frontend/.env.{development,production} dùng dấu CHẤM nên không dính, và chúng
+# phải ở lại trong repo (chỉ chứa NEXT_PUBLIC_*, nhúng lúc build).
+.env-*
+.env.local
+!.env.example
 *.pem
 *.key
 credentials*.json

@@ -36,10 +36,10 @@
 set -euo pipefail
 
 SSH_TARGET="${PTMATCH_SSH:-}"
-REMOTE_DIR="${PTMATCH_REMOTE_DIR:-/opt/ptmatch}"
+REMOTE_DIR="${PTMATCH_REMOTE_DIR:-/var/www/html/ptmatch}"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/ptmatch-backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
-COMPOSE_FILE="docker-compose.prod.yml"
+COMPOSE_FILE="docker-compose.yml"
 
 # Sàn kích thước, CỐ Ý đặt rất thấp.
 #
@@ -104,7 +104,7 @@ zcat "${DUMP_FILE}" | grep -q "CREATE TABLE" \
 log "Dump OK: $(du -h "${DUMP_FILE}" | cut -f1) (${BYTES} bytes), đã verify."
 
 # ---- 3. Media -------------------------------------------------------------
-# docker-compose.prod.yml mount ./media bằng bind mount nên có đường dẫn thật
+# docker-compose.yml mount ./media bằng bind mount nên có đường dẫn thật
 # trên host để rsync. KHÔNG dùng --delete: file bị xoá trên server (do lỗi hoặc
 # do phá hoại) không được kéo theo bản sao ở đây — đó là lý do có backup.
 if remote "test -d ${REMOTE_DIR}/media"; then

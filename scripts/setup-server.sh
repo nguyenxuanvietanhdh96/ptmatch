@@ -8,14 +8,25 @@
 #
 # Làm các việc:
 #   1. Cài Docker + compose plugin (nếu startup script chưa cài)
-#   2. Tạo /opt/ptmatch, clone repo (hoặc nhắc copy code thủ công)
+#   2. Tạo APP_DIR, clone repo (hoặc nhắc copy code thủ công)
 #   3. cp .env.example .env, sinh secrets, đặt kịch bản triển khai
 #   4. Xin chứng chỉ Let's Encrypt qua certbot (webroot) cho domain
 #   5. Cài cron tự renew cert + reload nginx
 # =============================================================================
 set -euo pipefail
 
+# APP_DIR: ưu tiên env; nếu không có thì suy từ vị trí script — nhưng CHỈ khi
+# thư mục cha thật sự là một bản checkout (có docker-compose.yml). Script
+# này còn được chạy đứng một mình để bootstrap máy trắng (lúc đó nó tự clone),
+# trường hợp đó vẫn rơi về /opt/ptmatch như cũ.
+_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -z "${APP_DIR:-}" && -f "${_repo_root}/docker-compose.yml" ]]; then
+  APP_DIR="${_repo_root}"
+fi
 APP_DIR="${APP_DIR:-/opt/ptmatch}"
+# nginx mang `profiles: ["prod"]` trong docker-compose.yml — không bật profile
+# này thì `up` bỏ qua nó và cổng 80/443 không có ai phục vụ.
+export COMPOSE_PROFILES=prod
 DOMAIN="${DOMAIN:-ptmatch.vn}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 REPO_URL="${REPO_URL:-}"
@@ -66,7 +77,7 @@ fi
 # --- 2. App directory + source code ----------------------------------------
 mkdir -p "${APP_DIR}"
 
-if [[ ! -d "${APP_DIR}/.git" && ! -f "${APP_DIR}/docker-compose.prod.yml" ]]; then
+if [[ ! -d "${APP_DIR}/.git" && ! -f "${APP_DIR}/docker-compose.yml" ]]; then
   if [[ -n "${REPO_URL}" ]]; then
     log "Clone repo ${REPO_URL} vào ${APP_DIR}..."
     git clone "${REPO_URL}" "${APP_DIR}"
@@ -121,13 +132,20 @@ else
 fi
 
 # --- 3b. Thư mục media (bind mount) -----------------------------------------
-# docker-compose.prod.yml mount ./media vào /app/media bằng bind mount, và
+# docker-compose.yml mount ./media vào /app/media bằng bind mount, và
 # container chạy user appuser uid 1000 (backend/Dockerfile). Không chown thì
 # backend không ghi được và mọi lượt upload thất bại với lỗi permission — mà
 # lỗi đó chỉ lộ ra khi có người thật bấm tải ảnh lên.
 mkdir -p "${APP_DIR}/media"
 chown -R 1000:1000 "${APP_DIR}/media"
 log "Đã tạo ${APP_DIR}/media (uid 1000, cho bind mount)."
+
+# Kiểm .env trước khi tạo container nào: placeholder lọt tới production nghĩa là
+# mật khẩu DB ai cũng biết, hoặc sitemap trỏ localhost.
+source "${APP_DIR}/scripts/lib-require-env.sh"
+if [[ "${SKIP_ENV_CHECK:-0}" != "1" ]]; then
+  require_prod_env || exit 1
+fi
 
 # --- 4. Let's Encrypt cert qua certbot (webroot) -----------------------------
 mkdir -p "${APP_DIR}/certbot/www" "${APP_DIR}/certbot/conf"
@@ -154,7 +172,7 @@ if [[ ! -d "${APP_DIR}/certbot/conf/live/${DOMAIN}" ]]; then
   # --no-deps: chỉ dựng nginx, không kéo theo backend/frontend — image của
   # chúng có thể chưa pull/build xong lúc này; nginx tự ký đã đủ để trả lời
   # HTTP-01 challenge trên cổng 80.
-  docker compose -f docker-compose.prod.yml up -d --no-deps nginx
+  docker compose -f docker-compose.yml up -d --no-deps nginx
 
   EMAIL_ARGS=(--register-unsafely-without-email)
   if [[ -n "${CERTBOT_EMAIL}" ]]; then
@@ -178,8 +196,8 @@ if [[ ! -d "${APP_DIR}/certbot/conf/live/${DOMAIN}" ]]; then
     --agree-tos --non-interactive
 
   log "Đã có cert thật — reload nginx rồi khởi động full stack..."
-  docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload
-  docker compose -f docker-compose.prod.yml up -d
+  docker compose -f docker-compose.yml exec -T nginx nginx -s reload
+  docker compose -f docker-compose.yml up -d
 else
   log "Cert cho ${DOMAIN} đã tồn tại — bỏ qua certbot."
 fi
@@ -204,12 +222,17 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # image GCE/Ubuntu — và job nhắc lead sẽ chạy lúc 2-4h sáng VN thay vì 7h-21h,
 # đúng thứ mà comment bên dưới nói là phải tránh.
 CRON_TZ=Asia/Ho_Chi_Minh
+# nginx mang \`profiles: ["prod"]\` trong docker-compose.yml. Cron chạy với môi
+# trường trống (không đọc .env, không đọc profile shell), nên thiếu dòng này thì
+# \`docker compose exec nginx\` trong job renew cert không thấy service — và lỗi
+# đó chỉ lộ ra sau ~90 ngày, đúng lúc cert hết hạn.
+COMPOSE_PROFILES=prod
 
 # Renew Let's Encrypt cert (2 lần/ngày theo khuyến nghị certbot) + reload nginx.
 # Bọc trong bash -c để redirect áp cho CẢ chuỗi lệnh: viết thẳng thì
 # ">> log 2>&1" chỉ dính vào lệnh cuối và lỗi certbot renew rơi vào cron mail
 # (thường là /dev/null) — cert hết hạn chỉ lộ ra khi site đã gãy.
-17 3,15 * * * root bash -c 'docker run --rm -v ${APP_DIR}/certbot/www:/var/www/certbot -v ${APP_DIR}/certbot/conf:/etc/letsencrypt certbot/certbot renew --webroot --webroot-path /var/www/certbot --quiet && cd ${APP_DIR} && docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload' 2>&1 | tee -a /var/log/ptmatch-certbot.log | logger -t ptmatch-certbot
+17 3,15 * * * root bash -c 'docker run --rm -v ${APP_DIR}/certbot/www:/var/www/certbot -v ${APP_DIR}/certbot/conf:/etc/letsencrypt certbot/certbot renew --webroot --webroot-path /var/www/certbot --quiet && cd ${APP_DIR} && docker compose -f docker-compose.yml exec -T nginx nginx -s reload' 2>&1 | tee -a /var/log/ptmatch-certbot.log | logger -t ptmatch-certbot
 
 # Backup PostgreSQL hằng ngày lúc 2AM
 0 2 * * * root ${APP_DIR}/scripts/backup-db.sh 2>&1 | tee -a /var/log/ptmatch-backup.log | logger -t ptmatch-backup
@@ -217,7 +240,7 @@ CRON_TZ=Asia/Ho_Chi_Minh
 # Nhắc PT về lead còn chưa xử lý — mỗi giờ, trong khung 7h-21h.
 # Không chạy ban đêm: thông báo lúc 3h sáng chỉ làm PT tắt thông báo, mất luôn
 # cả kênh báo lead mới. Job tự bỏ qua lead đã nhắc nên chạy dày là vô hại.
-0 7-21 * * * root cd ${APP_DIR} && docker compose -f docker-compose.prod.yml exec -T backend python -m app.jobs.lead_reminders 2>&1 | logger -t ptmatch-reminders
+0 7-21 * * * root cd ${APP_DIR} && docker compose -f docker-compose.yml exec -T backend python -m app.jobs.lead_reminders 2>&1 | logger -t ptmatch-reminders
 EOF
 chmod 0644 "${CRON_FILE}"
 log "Đã cài cron renew cert + backup DB tại ${CRON_FILE}."
