@@ -17,7 +17,13 @@ interface Session {
 
 function parseSession(value: string | undefined): Session | null {
   if (!value) return null;
-  const separator = value.lastIndexOf(".");
+  // Ngắt ở dấu chấm ĐẦU TIÊN, không phải cuối. `exp` do backend phát là epoch
+  // FLOAT (core/security.py giữ phần dưới giây cho `iat`), nên giá trị cookie có
+  // thể là "trainee.1790000000.123456" — lastIndexOf(".") trúng dấu thập phân,
+  // cho role="trainee.1790000000" và expiry=123456, tức mọi phiên bị coi là hết
+  // hạn từ 1970 và MỌI trang được bảo vệ đá người dùng về /login.
+  // Role là một trong pt/trainee/admin, không bao giờ chứa dấu chấm.
+  const separator = value.indexOf(".");
   if (separator < 0) return null;
   const expiry = Number(value.slice(separator + 1));
   if (!Number.isFinite(expiry)) return null;

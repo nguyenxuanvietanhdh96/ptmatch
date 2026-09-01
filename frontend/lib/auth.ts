@@ -50,9 +50,14 @@ export function saveAuth(accessToken: string, refreshToken?: string | null, user
   const sessionToken = refreshToken || getRefreshToken() || accessToken;
   const expiry = jwtExpiry(sessionToken);
   const role = (user ?? getUser())?.role ?? "";
-  const maxAge = expiry ? Math.max(0, expiry - Math.floor(Date.now() / 1000)) : 0;
+  // Math.floor: cookie chỉ cần độ chính xác GIÂY, còn `exp` từ backend là epoch
+  // float. Ghi nguyên số thực vào đây tạo ra hai dấu chấm trong giá trị cookie,
+  // và middleware.ts phải ngắt đúng chỗ mới đọc được — chặn ngay tại nguồn thì
+  // định dạng `<role>.<epochSeconds>` luôn có đúng một dấu chấm.
+  const expirySeconds = expiry === null ? null : Math.floor(expiry);
+  const maxAge = expirySeconds ? Math.max(0, expirySeconds - Math.floor(Date.now() / 1000)) : 0;
   if (maxAge > 0) {
-    writeCookie(COOKIE_NAME, `${role}.${expiry}`, maxAge);
+    writeCookie(COOKIE_NAME, `${role}.${expirySeconds}`, maxAge);
   }
   deleteCookie(LEGACY_COOKIE_NAME);
 }
