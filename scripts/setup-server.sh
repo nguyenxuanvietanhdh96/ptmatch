@@ -210,7 +210,33 @@ NGINXCONF
 
   # --no-deps: chỉ dựng nginx, không kéo theo backend/frontend — image của
   # chúng có thể chưa pull/build xong lúc này.
-  docker compose -f docker-compose.yml up -d --no-deps nginx
+  #
+  # --force-recreate: BẮT BUỘC cho lần chạy LẠI. Nếu lượt trước fail, container
+  # nginx còn đó và đang crash-loop dưới `restart: unless-stopped`. Compose thấy
+  # container đã ở trạng thái mong muốn (cấu hình compose không đổi — chỉ nội
+  # dung file bind-mount đổi) nên `up -d` là no-op: nó in "Started" trong 0.0s
+  # và tiến trình nginx bên trong vẫn lặp lại việc nạp CONF CŨ. Cổng 80 không
+  # bao giờ lên, certbot lại báo "Connection refused", và mỗi lượt như vậy ăn
+  # một phần định mức 5 lần validate thất bại/giờ của Let's Encrypt.
+  docker compose -f docker-compose.yml up -d --no-deps --force-recreate nginx
+
+  # Chờ nginx thật sự nghe cổng 80 trước khi gọi certbot. Không có bước này thì
+  # một nginx chết vì lý do khác (vd không bind được [::]:80) vẫn dẫn tới một
+  # lượt certbot bị đốt vô ích.
+  log "Chờ nginx trả lời trên cổng 80..."
+  for _ in $(seq 1 15); do
+    if curl -fsS -o /dev/null "http://localhost/.well-known/health" 2>/dev/null; then
+      log "nginx đã sẵn sàng."
+      break
+    fi
+    sleep 2
+  done
+  if ! curl -fsS -o /dev/null "http://localhost/.well-known/health" 2>/dev/null; then
+    echo "[setup-server] LỖI: nginx không trả lời http://localhost/.well-known/health." >&2
+    echo "KHÔNG gọi certbot (mỗi lần thất bại ăn định mức 5/giờ của Let's Encrypt)." >&2
+    echo "Xem nguyên nhân: docker compose logs nginx --tail 30" >&2
+    exit 1
+  fi
 
   EMAIL_ARGS=(--register-unsafely-without-email)
   if [[ -n "${CERTBOT_EMAIL}" ]]; then
