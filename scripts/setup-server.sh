@@ -155,36 +155,67 @@ if [[ ! -d "${APP_DIR}/certbot/conf/live/${DOMAIN}" ]]; then
   log "Lưu ý: DNS của ${DOMAIN} phải trỏ về IP server này, và nginx phải đang"
   log "serve /.well-known/acme-challenge/ từ ${APP_DIR}/certbot/www."
 
-  # nginx/conf.d/ptmatch.conf trỏ CỨNG server 443 vào
-  # /etc/letsencrypt/live/<domain>/{fullchain,privkey}.pem. Lần đầu chạy, file
-  # đó chưa tồn tại: nginx thoát [emerg] ngay lúc nạp config và crash-loop dưới
-  # `restart: unless-stopped`, nên cổng 80 — nơi certbot cần tới để xác nhận
-  # HTTP-01 — không bao giờ lên. Dựng trước một cert tự ký (1 ngày, đúng đường
-  # dẫn nginx đang trỏ) chỉ để nginx khởi động được; certbot sẽ xoá nó đi và
-  # thay bằng cert thật ngay sau.
-  log "Dựng cert tự ký tạm để nginx khởi động (sẽ bị certbot thay ngay sau)..."
-  mkdir -p "${APP_DIR}/certbot/conf/live/${DOMAIN}"
-  openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-    -keyout "${APP_DIR}/certbot/conf/live/${DOMAIN}/privkey.pem" \
-    -out "${APP_DIR}/certbot/conf/live/${DOMAIN}/fullchain.pem" \
-    -subj "/CN=${DOMAIN}" >/dev/null 2>&1
+  # nginx phân giải tên upstream LÚC NẠP CONFIG, không phải lúc có request. Ở
+  # bước này backend/frontend chưa chạy (--no-deps bên dưới, và image có thể
+  # chưa build), nên conf thật làm nginx thoát ngay:
+  #     [emerg] host not found in upstream "backend" in .../ptmatch.conf:111
+  # rồi crash-loop dưới `restart: unless-stopped` — cổng 80, đúng nơi certbot
+  # cần tới để xác nhận HTTP-01, không bao giờ lên. Triệu chứng nhìn thấy là
+  # certbot báo "Connection refused", rất dễ đổ nhầm cho firewall.
+  #
+  # Cách chữa: cho nginx một conf CHỈ có block 80 phục vụ ACME challenge —
+  # không upstream nào để phân giải, và không có block 443 nên cũng không cần
+  # cert. (Trước đây chỗ này dựng một cert tự ký để nginx khởi động được; cách
+  # đó vá sai chỗ, vì thứ chặn nginx là upstream chứ không phải cert.)
+  REAL_CONF="${APP_DIR}/nginx/conf.d/ptmatch.conf"
+  PARKED_CONF="${APP_DIR}/nginx/ptmatch.conf.parked"
+  BOOTSTRAP_CONF="${APP_DIR}/nginx/conf.d/00-bootstrap.conf"
+
+  restore_conf() {
+    [[ -f "${PARKED_CONF}" ]] && mv -f "${PARKED_CONF}" "${REAL_CONF}"
+    rm -f "${BOOTSTRAP_CONF}"
+    return 0
+  }
+  # Trả conf thật về chỗ cũ kể cả khi script thoát giữa chừng. Thiếu trap này,
+  # một lần certbot fail là conf thật nằm lại ngoài conf.d và nginx phục vụ mãi
+  # bằng bootstrap — mọi đường dẫn trả 503, mà nhìn log thì thấy nginx "khoẻ".
+  trap restore_conf EXIT
+
+  log "Tạm thay nginx conf bằng bản bootstrap (chỉ cổng 80, không upstream)..."
+  mv -f "${REAL_CONF}" "${PARKED_CONF}"
+  cat > "${BOOTSTRAP_CONF}" <<'NGINXCONF'
+# TẠM THỜI — setup-server.sh tạo file này chỉ để xin cert lần đầu và xoá ngay
+# sau đó. Không upstream, không block 443: nginx khởi động được cả khi backend
+# và frontend còn chưa tồn tại.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location = /.well-known/health {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 503 "PTMatch dang cai dat.\n";
+    }
+}
+NGINXCONF
 
   # --no-deps: chỉ dựng nginx, không kéo theo backend/frontend — image của
-  # chúng có thể chưa pull/build xong lúc này; nginx tự ký đã đủ để trả lời
-  # HTTP-01 challenge trên cổng 80.
+  # chúng có thể chưa pull/build xong lúc này.
   docker compose -f docker-compose.yml up -d --no-deps nginx
 
   EMAIL_ARGS=(--register-unsafely-without-email)
   if [[ -n "${CERTBOT_EMAIL}" ]]; then
     EMAIL_ARGS=(--email "${CERTBOT_EMAIL}")
   fi
-
-  # Xoá cert tự ký trước khi xin cert thật: certbot phát hiện live/<domain> đã
-  # có cert KHÔNG do nó cấp sẽ tạo lineage phụ (vd ptmatch.vn-0001) thay vì ghi
-  # đúng đường dẫn mà nginx đang trỏ tới.
-  rm -rf "${APP_DIR}/certbot/conf/live/${DOMAIN}" \
-    "${APP_DIR}/certbot/conf/archive/${DOMAIN}" \
-    "${APP_DIR}/certbot/conf/renewal/${DOMAIN}.conf"
 
   docker run --rm \
     -v "${APP_DIR}/certbot/www:/var/www/certbot" \
@@ -195,9 +226,15 @@ if [[ ! -d "${APP_DIR}/certbot/conf/live/${DOMAIN}" ]]; then
     "${EMAIL_ARGS[@]}" \
     --agree-tos --non-interactive
 
-  log "Đã có cert thật — reload nginx rồi khởi động full stack..."
-  docker compose -f docker-compose.yml exec -T nginx nginx -s reload
+  restore_conf
+  trap - EXIT
+
+  log "Đã có cert thật — khởi động full stack rồi nạp lại nginx..."
+  # Thứ tự quan trọng: backend/frontend phải TỒN TẠI trước, vì nginx chỉ phân
+  # giải upstream lúc nạp config. Restart (không phải reload) để nó đọc lại
+  # conf thật vừa trả về chỗ cũ.
   docker compose -f docker-compose.yml up -d
+  docker compose -f docker-compose.yml restart nginx
 else
   log "Cert cho ${DOMAIN} đã tồn tại — bỏ qua certbot."
 fi

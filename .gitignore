@@ -45,3 +45,6 @@ certbot/
 .DS_Store
 .idea/
 .vscode/
+
+# File tạm do setup-server.sh tạo khi xin cert lần đầu (trap tự dọn).
+nginx/*.parked
