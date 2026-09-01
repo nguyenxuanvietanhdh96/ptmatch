@@ -56,6 +56,19 @@ require_prod_env() {
     _fail "SECRET_KEY chỉ ${#secret} ký tự, cần tối thiểu 32"
   fi
 
+  # NOTIFY_CHANNELS: app/core/config.py TỪ CHỐI khởi động ở production khi danh
+  # sách chỉ có 'log' (LogChannel trả ok=True nên chain dừng ở đó, lead ghi
+  # status='sent' mà không PT nào nhận được gì — xem R5). Không bắt ở đây thì
+  # guard đó hiện ra dưới dạng "container backend is unhealthy", không nói gì
+  # về nguyên nhân, và frontend cũng không lên vì depends_on service_healthy.
+  local channels
+  channels="$(_env_value NOTIFY_CHANNELS)"
+  local real_channels
+  real_channels="$(printf '%s' "${channels}" | tr ',' '\n' | sed 's/[[:space:]]//g' | grep -v '^log$' | grep -v '^$' || true)"
+  if [[ -z "${real_channels}" ]]; then
+    _fail "NOTIFY_CHANNELS='${channels}' chỉ có 'log' (hoặc rỗng) — backend sẽ TỪ CHỐI boot ở production. Đặt NOTIFY_CHANNELS=email,log (SMTP_USER/PASSWORD có thể điền sau)"
+  fi
+
   # SITE_URL đi vào sitemap.xml và robots.txt. Trỏ localhost ở production thì
   # Google nhận một sitemap toàn link không truy cập được.
   [[ -n "${site}" ]] || _fail "SITE_URL trống trong .env"
