@@ -33,6 +33,11 @@ class PTResponsiveness(BaseModel):
     leads: int
     answered: int
     disputed: int
+    # Trạng thái xử lý, để hàng nào đã bị xử lý thì hiện rõ ngay tại đây thay vì
+    # mời admin làm lại. `disputed` là tín hiệu chính dẫn tới các thao tác đó.
+    suspended: bool = False
+    banned: bool = False
+    deleted: bool = False
     avg_response_hours: Optional[float] = None
 
 

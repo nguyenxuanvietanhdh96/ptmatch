@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import AdminShell from "@/components/AdminShell";
+import PTModerationActions from "@/components/PTModerationActions";
 import { Loading, Refreshing, repeat, Skeleton, StatCardSkeleton } from "@/components/Skeleton";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { LeadOpsOverview } from "@/lib/types";
@@ -23,6 +24,9 @@ const DAY_OPTIONS = [7, 30, 90];
 function LeadOpsContent() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<LeadOpsOverview | null>(null);
+  // Slug của PT đang mở panel xử lý. Một hàng tại một thời điểm: mở nhiều panel
+  // cùng lúc chỉ làm tăng khả năng nhập lý do vào đúng hàng bên cạnh.
+  const [actingOn, setActingOn] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -192,18 +196,20 @@ function LeadOpsContent() {
                     <th className="p-3 font-medium">Đã trả lời</th>
                     <th className="p-3 font-medium">Phản bác</th>
                     <th className="p-3 font-medium">TB phản hồi</th>
+                    <th className="p-3 font-medium">Xử lý</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.pts.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="p-4 text-center text-slate-400">
+                      <td colSpan={6} className="p-4 text-center text-slate-400">
                         Chưa có lead nào trong khoảng này.
                       </td>
                     </tr>
                   ) : (
                     data.pts.map((pt) => (
-                      <tr key={pt.slug} className="border-b border-slate-50 last:border-0">
+                      <Fragment key={pt.slug}>
+                      <tr className="border-b border-slate-50 last:border-0">
                         <td className="p-3">
                           <Link
                             href={`/pt/${pt.slug}`}
@@ -226,7 +232,42 @@ function LeadOpsContent() {
                         <td className="p-3 text-slate-700">
                           {pt.avg_response_hours === null ? "—" : `${pt.avg_response_hours}h`}
                         </td>
+                        <td className="p-3">
+                          {pt.deleted ? (
+                            <span className="text-xs text-slate-400">Đã đóng</span>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                setActingOn((cur) => (cur === pt.slug ? "" : pt.slug))
+                              }
+                              className="text-sm font-medium text-slate-500 hover:text-slate-900"
+                            >
+                              {pt.suspended || pt.banned ? "Đã xử lý ▾" : "Xử lý ▾"}
+                            </button>
+                          )}
+                        </td>
                       </tr>
+                      {/* Panel xử lý đặt ở hàng riêng chiếm hết chiều ngang:
+                          nhồi vào một ô của bảng 6 cột thì ô nhập lý do chỉ còn
+                          vài chục pixel. */}
+                      {actingOn === pt.slug && !pt.deleted && (
+                        <tr className="border-b border-slate-50 bg-slate-50/60">
+                          <td colSpan={6} className="p-3">
+                            <PTModerationActions
+                              slug={pt.slug}
+                              ptName={pt.full_name}
+                              suspended={pt.suspended}
+                              banned={pt.banned}
+                              deleted={pt.deleted}
+                              onChanged={() => {
+                                setActingOn("");
+                                load();
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     ))
                   )}
                 </tbody>

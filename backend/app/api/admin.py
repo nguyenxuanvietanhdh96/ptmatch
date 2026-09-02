@@ -16,7 +16,7 @@ from datetime import timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Text, case, func, select
+from sqlalchemy import Text, and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
@@ -129,6 +129,9 @@ async def lead_ops_overview(
                 func.count(Lead.id),
                 func.count(Lead.id).filter(responded),
                 func.count(Lead.id).filter(Lead.trainee_reported_no_contact_at.is_not(None)),
+                PTProfile.suspended_at,
+                User.banned_at,
+                User.deleted_at,
                 func.avg(
                     case(
                         (
@@ -141,8 +144,15 @@ async def lead_ops_overview(
                 ),
             )
             .join(Lead, Lead.pt_profile_id == PTProfile.id)
+            .join(User, User.id == PTProfile.user_id)
             .where(Lead.created_at >= since)
-            .group_by(PTProfile.slug, PTProfile.full_name)
+            .group_by(
+                PTProfile.slug,
+                PTProfile.full_name,
+                PTProfile.suspended_at,
+                User.banned_at,
+                User.deleted_at,
+            )
             .order_by(func.count(Lead.id).filter(responded) * 1.0 / func.count(Lead.id))
         )
     ).all()
@@ -154,9 +164,22 @@ async def lead_ops_overview(
             leads=leads,
             answered=answered_count,
             disputed=disputed_count,
+            suspended=suspended_at is not None,
+            banned=banned_at is not None,
+            deleted=deleted_at is not None,
             avg_response_hours=round(float(avg_hours), 1) if avg_hours is not None else None,
         )
-        for slug, full_name, leads, answered_count, disputed_count, avg_hours in pt_rows
+        for (
+            slug,
+            full_name,
+            leads,
+            answered_count,
+            disputed_count,
+            suspended_at,
+            banned_at,
+            deleted_at,
+            avg_hours,
+        ) in pt_rows
     ]
 
     return LeadOpsOverview(
@@ -208,11 +231,16 @@ async def overview(
     # Một hồ sơ tồn tại mà không có giá và không có địa điểm thì học viên không
     # chọn được — đếm riêng từng phần để biết nên đi giục PT bổ sung gì.
     has_pricing = PTProfile.pricing.op("->>")("per_session").is_not(None)
+    # "Đang bật" phải là đang bật THẬT: một hồ sơ bị đình chỉ vẫn có
+    # is_active=True nhưng đã rời khỏi mọi chỗ công khai, nên đếm nó vào đây là
+    # báo cho chính mình một con số cung cao hơn thực tế — mà đây là bảng dùng để
+    # quyết định qua/dừng giai đoạn kiểm chứng.
+    is_live = and_(PTProfile.is_active.is_(True), PTProfile.suspended_at.is_(None))
     pt_row = (
         await db.execute(
             select(
                 func.count(),
-                func.count().filter(PTProfile.is_active.is_(True)),
+                func.count().filter(is_live),
                 func.count().filter(has_pricing),
                 func.count().filter(
                     select(PTLocation.id)
@@ -228,7 +256,9 @@ async def overview(
                 func.count().filter(
                     select(Lead.id).where(Lead.pt_profile_id == PTProfile.id).exists()
                 ),
-            ).select_from(PTProfile)
+            )
+            .select_from(PTProfile)
+            .where(PTProfile.deleted_at.is_(None))
         )
     ).one()
 
@@ -627,6 +657,25 @@ async def _profile_and_owner(db: AsyncSession, slug: str) -> tuple[PTProfile, Us
     return row[0], row[1]
 
 
+def _refuse_on_admin(owner: User) -> None:
+    """Chặn khoá/đóng một tài khoản quản trị.
+
+    Không có chốt này thì một cú bấm nhầm dòng có thể tự khoá chính mình ra khỏi
+    khu quản trị, và khu đó không có đường tự phục hồi qua web — phải SSH vào
+    server chạy script. Đúng loại bẫy đã xảy ra một lần khi nâng quyền cho tài
+    khoản PT rồi mất luôn dashboard.
+
+    Đổi role vẫn làm được, nhưng bằng `python -m app.jobs.grant_admin` — có chủ ý,
+    không phải một cú bấm.
+    """
+    if owner.role is UserRole.admin:
+        raise HTTPException(
+            status_code=409,
+            detail="Không thao tác được trên tài khoản quản trị. "
+            "Hạ quyền bằng grant_admin trước nếu thật sự cần.",
+        )
+
+
 def _account_state(profile: PTProfile, owner: User) -> PTAccountState:
     return PTAccountState(
         slug=profile.slug,
@@ -656,6 +705,7 @@ async def ban_pt_account(
     mở khoá sẽ vô tình bỏ luôn đình chỉ đang có lý do riêng.
     """
     profile, owner = await _profile_and_owner(db, slug)
+    _refuse_on_admin(owner)
     if owner.deleted_at is not None:
         raise HTTPException(status_code=409, detail="Tài khoản này đã được đóng")
 
@@ -700,6 +750,7 @@ async def close_pt_account(
     HTTP — hàng dữ liệu vẫn còn, và có body cần xác nhận.
     """
     profile, owner = await _profile_and_owner(db, slug)
+    _refuse_on_admin(owner)
     if body.confirm_slug.strip() != slug:
         raise HTTPException(
             status_code=422, detail="Chuỗi xác nhận không khớp slug hồ sơ"

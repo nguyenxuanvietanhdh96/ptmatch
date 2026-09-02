@@ -183,6 +183,9 @@ export interface PTResponsiveness {
   answered: number;
   /** Số lead học viên bấm "PT chưa liên hệ" — đáng tin hơn `answered`. */
   disputed: number;
+  suspended: boolean;
+  banned: boolean;
+  deleted: boolean;
   avg_response_hours?: number | null;
 }
 
