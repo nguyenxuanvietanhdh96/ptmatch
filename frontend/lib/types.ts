@@ -109,6 +109,9 @@ export interface PTProfile {
    * Luật nằm ở backend (app/services/listing.py), frontend chỉ hiển thị.
    */
   missing_listing?: string[] | null;
+  /** Bị admin đình chỉ — PT không tự tháo được, khác `is_active`. */
+  suspended?: boolean;
+  suspended_reason?: string | null;
 }
 
 /** Item trong kết quả tìm kiếm — phòng thủ với nhiều shape backend có thể trả về */
@@ -264,6 +267,8 @@ export interface AdminReviewItem {
   id: string;
   pt_name: string;
   pt_slug: string;
+  /** Hồ sơ PT này đang bị đình chỉ — để không mời admin đình chỉ lần nữa. */
+  pt_suspended: boolean;
   reviewer_name: string;
   reviewer_phone?: string | null;
   rating: number;

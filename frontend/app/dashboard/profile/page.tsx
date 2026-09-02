@@ -71,6 +71,11 @@ export default function ProfileEditorPage() {
   // Luật "hồ sơ đủ điều kiện hiển thị" do backend giữ (app/services/listing.py);
   // ở đây chỉ nhận kết quả về hiển thị, không tính lại.
   const [missingListing, setMissingListing] = useState<string[]>([]);
+  // Đình chỉ bởi admin — không phải "yêu cầu còn thiếu", PT không tự tháo được.
+  const [suspension, setSuspension] = useState<{ on: boolean; reason: string | null }>({
+    on: false,
+    reason: null,
+  });
   const [isActive, setIsActive] = useState(true);
 
   // Giá trị đang được kiểm tra. Phản hồi của một lượt kiểm tra cũ về muộn sẽ bị
@@ -112,6 +117,7 @@ export default function ProfileEditorPage() {
         setSavedName(p.full_name ?? "");
         setLocations(p.locations ?? []);
         setMissingListing(p.missing_listing ?? []);
+        setSuspension({ on: p.suspended === true, reason: p.suspended_reason ?? null });
         setIsActive(p.is_active !== false);
         const knownSlugs = new Set(SPECIALTIES.map((s) => s.slug));
         const hasCustom = (p.specialties ?? []).some((s) => !knownSlugs.has(s));
@@ -225,6 +231,7 @@ export default function ProfileEditorPage() {
     try {
       const p = await apiFetch<PTProfile>("/api/pts/me", { auth: true });
       setMissingListing(p.missing_listing ?? []);
+      setSuspension({ on: p.suspended === true, reason: p.suspended_reason ?? null });
       revalidatePublicPages();
     } catch {
       // Chỉ là chỉ báo phụ — hỏng thì giữ nguyên trạng thái đang hiện, không
@@ -285,6 +292,10 @@ export default function ProfileEditorPage() {
       setSavedName(updated?.full_name ?? form.full_name.trim());
       setSlugStatus("idle");
       setMissingListing(updated?.missing_listing ?? []);
+      setSuspension({
+        on: updated?.suspended === true,
+        reason: updated?.suspended_reason ?? null,
+      });
       setMessage({ type: "success", text: t("saved") });
       // Trang công khai dựng sẵn theo ISR, nên không xoá cache ở đây thì PT bấm
       // "Xem trang của tôi" ngay sau khi lưu vẫn thấy nội dung cũ.
@@ -327,7 +338,14 @@ export default function ProfileEditorPage() {
         </div>
       )}
 
-      <ListingChecklist missing={missingListing} slug={slug} fullName={savedName} hideAction />
+      <ListingChecklist
+        missing={missingListing}
+        suspended={suspension.on}
+        suspendedReason={suspension.reason}
+        slug={slug}
+        fullName={savedName}
+        hideAction
+      />
 
       {/* URL cá nhân */}
       <section className="card space-y-2 p-5">

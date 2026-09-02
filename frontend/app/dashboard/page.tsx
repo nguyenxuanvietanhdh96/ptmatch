@@ -76,8 +76,15 @@ export default function DashboardPage() {
           - Hồ sơ đã hiển thị → việc kế tiếp là chia sẻ. Ở giai đoạn chưa có lưu
             lượng, chính PT là kênh phân phối hiệu quả nhất cho hồ sơ của họ. */}
       {profile &&
-        ((profile.missing_listing?.length ?? 0) > 0 ? (
-          <ListingChecklist missing={profile.missing_listing ?? []} slug={profile.slug} />
+        (profile.suspended || (profile.missing_listing?.length ?? 0) > 0 ? (
+          // Hồ sơ bị đình chỉ đã bị ẩn khỏi mọi chỗ công khai, nên mời PT đi
+          // chia sẻ link của nó là gửi họ đi phát một đường dẫn trả 404.
+          <ListingChecklist
+            missing={profile.missing_listing ?? []}
+            suspended={profile.suspended}
+            suspendedReason={profile.suspended_reason}
+            slug={profile.slug}
+          />
         ) : (
           <ShareProfile slug={profile.slug} ptName={profile.full_name} />
         ))}

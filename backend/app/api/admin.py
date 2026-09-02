@@ -49,6 +49,8 @@ from app.schemas.admin import (
     FeedbackListOut,
     LeadOpsOverview,
     PTResponsiveness,
+    PTSuspendRequest,
+    PTSuspendResult,
 )
 from app.services.labels import specialty_label
 from app.services.rating import refresh_pt_rating
@@ -429,7 +431,9 @@ async def list_reviews_for_moderation(
     `only_anonymous` và `max_rating` là hai bộ lọc thực dụng: phá hoại gần như
     luôn là đánh giá điểm thấp gửi ẩn danh.
     """
-    stmt = select(Review, PTProfile.full_name, PTProfile.slug).join(
+    stmt = select(
+        Review, PTProfile.full_name, PTProfile.slug, PTProfile.suspended_at
+    ).join(
         PTProfile, PTProfile.id == Review.pt_profile_id
     )
     if only_anonymous:
@@ -454,6 +458,7 @@ async def list_reviews_for_moderation(
                 id=r.id,
                 pt_name=pt_name,
                 pt_slug=pt_slug,
+                pt_suspended=pt_suspended_at is not None,
                 reviewer_name=r.reviewer_name,
                 reviewer_phone=r.reviewer_phone,
                 rating=r.rating,
@@ -464,7 +469,7 @@ async def list_reviews_for_moderation(
                 created_at=r.created_at,
                 approved_at=r.approved_at,
             )
-            for r, pt_name, pt_slug in rows
+            for r, pt_name, pt_slug, pt_suspended_at in rows
         ],
         total=int(total or 0),
         page=page,
@@ -527,4 +532,63 @@ async def moderate_review(
         has_reply=bool(review.reply_content),
         created_at=review.created_at,
         approved_at=review.approved_at,
+    )
+
+@router.patch("/pts/{slug}/suspension", response_model=PTSuspendResult)
+async def suspend_pt_profile(
+    slug: str,
+    body: PTSuspendRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Đình chỉ (hoặc bỏ đình chỉ) một hồ sơ PT.
+
+    Trang chính sách quyền riêng tư hứa với học viên: "Nếu bị làm phiền, hãy báo
+    cho chúng tôi để xử lý tài khoản PT đó." Trước endpoint này, cách duy nhất
+    để làm việc đó là UPDATE thẳng vào DB — một lời hứa không có công cụ chống
+    lưng.
+
+    KHÔNG dùng `is_active`: cột đó là lựa chọn của PT và `PUT /pts/me` cho phép
+    PT tự đặt, nên admin tắt xong PT bật lại được ngay. `suspended_at` chỉ
+    endpoint này đổi được.
+
+    Hồ sơ bị đình chỉ rời khỏi /pts, trang chủ và sitemap (listable_clause) và
+    404 cả với link trực tiếp. Dữ liệu không bị xoá và PT vẫn đăng nhập được —
+    dashboard sẽ nói rõ hồ sơ đang bị đình chỉ vì lý do gì.
+    """
+    profile = await db.scalar(select(PTProfile).where(PTProfile.slug == slug))
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ PT")
+
+    if body.suspended:
+        reason = (body.reason or "").strip()
+        if not reason:
+            raise HTTPException(
+                status_code=422, detail="Phải ghi lý do khi đình chỉ hồ sơ"
+            )
+        profile.suspended_at = now_vn()
+        profile.suspended_reason = reason
+    else:
+        profile.suspended_at = None
+        profile.suspended_reason = None
+
+    await db.commit()
+    await db.refresh(profile)
+
+    # Ghi log để còn tra được ai làm gì: đây là thao tác ảnh hưởng tới sinh kế
+    # của một người, không phải một lần bật/tắt cấu hình.
+    logger.info(
+        "admin %s %s hồ sơ %s%s",
+        admin.email,
+        "đình chỉ" if body.suspended else "bỏ đình chỉ",
+        slug,
+        " — lý do: %s" % profile.suspended_reason if profile.suspended_reason else "",
+    )
+
+    return PTSuspendResult(
+        slug=profile.slug,
+        full_name=profile.full_name,
+        suspended=profile.suspended_at is not None,
+        suspended_at=profile.suspended_at,
+        suspended_reason=profile.suspended_reason,
     )

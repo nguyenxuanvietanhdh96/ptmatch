@@ -26,6 +26,10 @@ import { useTranslations } from "next-intl";
 
 interface ListingChecklistProps {
   missing: string[];
+  /** Bị admin đình chỉ. Ưu tiên hơn mọi trạng thái khác: hồ sơ đã rời khỏi chỗ
+   *  công khai, nên báo "còn thiếu ảnh" hay "đang hiển thị" đều là nói sai. */
+  suspended?: boolean;
+  suspendedReason?: string | null;
   slug?: string;
   /** Dùng làm từ khoá cho link "tìm tôi trên trang tìm kiếm". */
   fullName?: string;
@@ -35,11 +39,39 @@ interface ListingChecklistProps {
 
 export default function ListingChecklist({
   missing,
+  suspended,
+  suspendedReason,
   slug,
   fullName,
   hideAction,
 }: ListingChecklistProps) {
   const t = useTranslations("listingChecklist");
+
+  // Kiểm TRƯỚC hai nhánh còn lại. Hồ sơ bị đình chỉ đã bị loại khỏi
+  // listable_clause, nên nếu rơi vào nhánh xanh nó sẽ nói "đang hiển thị công
+  // khai" trong khi thực tế không ai tìm thấy — đúng kiểu lệch mà docstring của
+  // backend services/listing.py cảnh báo.
+  if (suspended) {
+    return (
+      <div className="card border-rose-200 bg-rose-50 p-4">
+        <div className="flex items-start gap-3">
+          <svg className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-rose-900">{t("suspendedTitle")}</p>
+            <p className="mt-1 text-sm text-rose-800">{t("suspendedBody")}</p>
+            {suspendedReason && (
+              <p className="mt-2 rounded-lg bg-white px-3 py-2 text-sm text-rose-900 ring-1 ring-rose-200">
+                {suspendedReason}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (missing.length === 0) {
     const searchHref = fullName?.trim()
       ? `/pts?q=${encodeURIComponent(fullName.trim())}`

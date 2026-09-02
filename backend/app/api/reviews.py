@@ -12,6 +12,7 @@ from app.api.deps import get_current_pt_profile, get_current_user, get_optional_
 from app.core.database import get_db
 from app.core.ratelimit import limiter
 from app.models import PTProfile, Review, User, UserRole
+from app.services.listing import reachable_clause
 from app.schemas.review import (
     MyReviewOut,
     ReviewCreate,
@@ -29,9 +30,7 @@ router = APIRouter(tags=["reviews"])
 
 async def _get_active_profile_by_slug(db: AsyncSession, slug: str) -> PTProfile:
     profile = await db.scalar(
-        select(PTProfile).where(
-            PTProfile.slug == slug, PTProfile.is_active.is_(True)
-        )
+        select(PTProfile).where(PTProfile.slug == slug, reachable_clause())
     )
     if profile is None:
         raise HTTPException(status_code=404, detail="PT not found")

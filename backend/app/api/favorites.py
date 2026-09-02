@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import Favorite, PTProfile, User
+from app.services.listing import reachable_clause
 from app.schemas.favorite import FavoriteCreate, FavoriteToggleOut
 from app.schemas.pt import PTListItem
 
@@ -16,9 +17,7 @@ router = APIRouter(prefix="/favorites", tags=["favorites"])
 
 async def _profile_by_slug(db: AsyncSession, slug: str) -> PTProfile:
     profile = await db.scalar(
-        select(PTProfile).where(
-            PTProfile.slug == slug, PTProfile.is_active.is_(True)
-        )
+        select(PTProfile).where(PTProfile.slug == slug, reachable_clause())
     )
     if profile is None:
         raise HTTPException(status_code=404, detail="PT not found")
@@ -34,7 +33,7 @@ async def list_favorites(
         await db.scalars(
             select(PTProfile)
             .join(Favorite, Favorite.pt_profile_id == PTProfile.id)
-            .where(Favorite.user_id == user.id, PTProfile.is_active.is_(True))
+            .where(Favorite.user_id == user.id, reachable_clause())
             .order_by(Favorite.created_at.desc())
         )
     ).all()
@@ -54,7 +53,7 @@ async def list_favorite_slugs(
             # Cùng filter với list_favorites: PT đã tắt hiển thị (is_active=False)
             # thì trang của họ 404, nên không được trả về đây làm quả tim đầy
             # dẫn tới một link chết.
-            .where(Favorite.user_id == user.id, PTProfile.is_active.is_(True))
+            .where(Favorite.user_id == user.id, reachable_clause())
         )
     ).all()
     return list(slugs)

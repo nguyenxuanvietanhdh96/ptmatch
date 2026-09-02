@@ -6,6 +6,7 @@ import AdminShell from "@/components/AdminShell";
 import RatingStars from "@/components/RatingStars";
 import { Loading, Refreshing, repeat, Skeleton } from "@/components/Skeleton";
 import { ApiError, apiFetch } from "@/lib/api";
+import SuspendPTButton from "@/components/SuspendPTButton";
 import { timeAgo } from "@/lib/format";
 import type { AdminReviewItem, AdminReviewList } from "@/lib/types";
 
@@ -275,6 +276,15 @@ function ReviewsContent() {
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-3">
+                    {/* Xử lý HỒ SƠ, không phải đánh giá: gỡ một đánh giá xấu chỉ
+                        dọn triệu chứng khi vấn đề là chính PT. Đặt ở đây vì đây
+                        là nơi báo cáo đi vào. */}
+                    <SuspendPTButton
+                      slug={item.pt_slug}
+                      ptName={item.pt_name}
+                      suspended={item.pt_suspended}
+                      onChanged={() => load()}
+                    />
                     {item.approved_at ? (
                       <button
                         onClick={() => moderate(item, false)}

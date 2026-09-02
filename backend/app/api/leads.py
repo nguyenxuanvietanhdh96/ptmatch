@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.ratelimit import limiter
 from app.models import Lead, LeadStatus, PTProfile, User
+from app.services.listing import reachable_clause
 from app.schemas.lead import (
     LeadCreate,
     LeadCreatedOut,
@@ -52,7 +53,7 @@ async def submit_lead(
 ):
     profile = await db.scalar(
         select(PTProfile).where(
-            PTProfile.slug == body.pt_slug, PTProfile.is_active.is_(True)
+            PTProfile.slug == body.pt_slug, reachable_clause()
         )
     )
     if profile is None:

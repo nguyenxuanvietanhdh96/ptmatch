@@ -10,6 +10,10 @@ Ba yêu cầu dưới đây cố ý ít: chúng chỉ chặn hồ sơ *rỗng*, 
 *sơ sài*. Mọi thứ khác (bio, chứng chỉ, portfolio) làm hồ sơ hấp dẫn hơn nhưng
 không phải điều kiện để tồn tại.
 
+Đình chỉ bởi admin (`suspended_at`) cũng loại hồ sơ khỏi mọi chỗ công khai,
+nhưng KHÔNG phải một "yêu cầu còn thiếu" — PT không thể tự bổ sung để hết bị
+đình chỉ. Nó được báo cho PT bằng một khối riêng, xem `PTDetail.suspended`.
+
 `listable_clause()` và `missing_listing_requirements()` diễn đạt **cùng một
 quy tắc** ở hai nơi — một cho câu SQL lọc danh sách, một cho Python để nói cho
 PT biết họ còn thiếu gì. Sửa cái này thì phải sửa cái kia, nếu không dashboard
@@ -49,12 +53,38 @@ def per_session_price_expr():
 def listable_clause():
     """Mệnh đề WHERE cho mọi chỗ liệt kê hồ sơ ra công khai."""
     return and_(
+        # Đình chỉ bởi admin. Phải nằm ở ĐÂY, không phải chỉ ở một truy vấn nào
+        # đó: hồ sơ bị xử lý phải rời khỏi /pts, sitemap và trang chủ cùng lúc,
+        # nếu không thì "đã xử lý" chỉ đúng ở một chỗ.
+        PTProfile.suspended_at.is_(None),
         PTProfile.is_active.is_(True),
         func.coalesce(PTProfile.avatar_url, "") != "",
         per_session_price_expr() > 0,
         select(PTLocation.id)
         .where(PTLocation.pt_profile_id == PTProfile.id)
         .exists(),
+    )
+
+
+def reachable_clause():
+    """Hồ sơ còn được TƯƠNG TÁC qua link trực tiếp: xem, gửi lead, đánh giá, lưu.
+
+    Khác `listable_clause()`: KHÔNG đòi ảnh/giá/khu vực. Hồ sơ chưa đủ điều kiện
+    vẫn phải xem được qua link để PT tự kiểm và chia sẻ trong lúc bổ sung — đó là
+    chủ ý, không phải sơ hở.
+
+    Nhưng hồ sơ bị đình chỉ thì mọi đường vào phải đóng, kể cả POST trực tiếp
+    bằng slug. Quan trọng nhất là `/api/leads`: đình chỉ một PT thường xảy ra
+    CHÍNH VÌ họ làm phiền học viên, nên một hồ sơ bị đình chỉ mà vẫn nhận được số
+    điện thoại thì biện pháp xử lý chỉ là trang trí.
+
+    Tồn tại như một hàm dùng chung vì mệnh đề này trước đây được viết lại ở bốn
+    nơi (pts, leads, reviews, favorites). Bốn bản sao thì lần thêm điều kiện sau
+    sẽ sửa được ba.
+    """
+    return and_(
+        PTProfile.is_active.is_(True),
+        PTProfile.suspended_at.is_(None),
     )
 
 

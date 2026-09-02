@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChannelStat(BaseModel):
@@ -147,6 +147,9 @@ class AdminReviewItem(BaseModel):
     id: uuid.UUID
     pt_name: str
     pt_slug: str
+    # Hồ sơ PT này đang bị đình chỉ hay không. Có ở đây để giao diện kiểm duyệt
+    # không mời admin "đình chỉ" một hồ sơ đã bị đình chỉ rồi.
+    pt_suspended: bool = False
     reviewer_name: str
     # SĐT người viết — admin cần để nhận ra một người spam nhiều PT bằng nhiều số.
     reviewer_phone: Optional[str] = None
@@ -176,3 +179,22 @@ class AdminReviewList(BaseModel):
     total: int
     page: int
     page_size: int
+
+class PTSuspendRequest(BaseModel):
+    """Đình chỉ hoặc bỏ đình chỉ một hồ sơ PT.
+
+    `reason` bắt buộc khi đình chỉ: một hồ sơ biến mất khỏi kết quả tìm kiếm mà
+    không ai ghi lại vì sao sẽ tốn hàng giờ dò tìm vài tháng sau, và PT hỏi thì
+    không ai trả lời được.
+    """
+
+    suspended: bool
+    reason: Optional[str] = Field(default=None, min_length=3, max_length=500)
+
+
+class PTSuspendResult(BaseModel):
+    slug: str
+    full_name: Optional[str] = None
+    suspended: bool
+    suspended_at: Optional[datetime] = None
+    suspended_reason: Optional[str] = None

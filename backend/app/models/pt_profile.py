@@ -110,6 +110,13 @@ class PTProfile(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
+    # Đình chỉ bởi admin. Khác `is_active`: cột trên là lựa chọn của PT (tạm ẩn
+    # hồ sơ) và PT tự đặt được qua PUT /api/pts/me, nên không dùng làm biện pháp
+    # xử lý — đối tượng bị xử lý sẽ tự tháo. NULL = không bị đình chỉ.
+    suspended_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    suspended_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     avg_rating: Mapped[float] = mapped_column(
         Float, nullable=False, default=0, server_default=text("0")
     )

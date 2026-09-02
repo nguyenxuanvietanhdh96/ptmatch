@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.models import Lead, LeadStatus, PortfolioItem, PTLocation, PTProfile, Review
 from app.models.pt_profile import PortfolioType
 from app.services.listing import (
+    reachable_clause,
     listable_clause,
     missing_listing_requirements,
     per_session_price_expr as _per_session_price,
@@ -152,6 +153,8 @@ async def list_sitemap_entries(db: AsyncSession = Depends(get_db)):
 def _my_profile_response(profile: PTProfile) -> PTDetail:
     detail = PTDetail.model_validate(profile)
     detail.missing_listing = missing_listing_requirements(profile)
+    detail.suspended = profile.suspended_at is not None
+    detail.suspended_reason = profile.suspended_reason
     return detail
 
 
@@ -433,10 +436,12 @@ async def _activity_for(db: AsyncSession, pt_profile_id: uuid.UUID) -> PTActivit
 
 @router.get("/{slug}", response_model=PTPublicDetail)
 async def get_pt_detail(slug: str, db: AsyncSession = Depends(get_db)):
+    # Cố ý KHÔNG dùng listable_clause() ở đây: hồ sơ chưa đủ ảnh/giá/khu vực vẫn
+    # xem được qua link trực tiếp để PT tự kiểm và chia sẻ. Nhưng hồ sơ bị đình
+    # chỉ thì phải biến mất kể cả với link trực tiếp — nếu không thì "đã xử lý"
+    # chỉ đúng ở trang tìm kiếm, còn link đã phát ra ngoài vẫn sống.
     profile = await db.scalar(
-        select(PTProfile).where(
-            PTProfile.slug == slug, PTProfile.is_active.is_(True)
-        )
+        select(PTProfile).where(PTProfile.slug == slug, reachable_clause())
     )
     if profile is None:
         raise HTTPException(status_code=404, detail="PT not found")
@@ -462,7 +467,7 @@ async def register_profile_view(
     """
     result = await db.execute(
         update(PTProfile)
-        .where(PTProfile.slug == slug, PTProfile.is_active.is_(True))
+        .where(PTProfile.slug == slug, reachable_clause())
         .values(
             view_count=PTProfile.view_count + 1,
             # Giữ nguyên updated_at: cột này có onupdate=now() nên mặc định MỌI

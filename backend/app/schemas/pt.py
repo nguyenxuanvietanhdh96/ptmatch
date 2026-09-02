@@ -261,6 +261,13 @@ class PTDetail(PTDetailBase):
     # là đã đủ. Xem app/services/listing.py — dashboard dựng checklist từ đây
     # thay vì tự đoán lại luật, để hai bên không nói khác nhau.
     missing_listing: List[str] = []
+    # Bị admin đình chỉ. Tách khỏi `missing_listing` vì PT không thể tự bổ sung
+    # gì để hết bị đình chỉ — gộp vào đó sẽ thành một mục "còn thiếu" không có
+    # cách nào làm xong. Không có hai trường này thì dashboard báo "hồ sơ đang
+    # hiển thị" trong khi truy vấn công khai đã loại nó ra, đúng kiểu lệch mà
+    # docstring của services/listing.py cảnh báo.
+    suspended: bool = False
+    suspended_reason: Optional[str] = None
 
 
 class PTActivity(BaseModel):

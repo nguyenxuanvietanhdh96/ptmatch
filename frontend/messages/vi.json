@@ -158,7 +158,9 @@
     "pendingBody": "Học viên chưa tìm thấy bạn trên trang tìm kiếm. Còn thiếu:",
     "fix": "Bổ sung ngay",
     "homeNote": "Mục “PT nổi bật” ở trang chủ chỉ điểm 6 hồ sơ có đánh giá cao nhất, nên hồ sơ mới chưa có đánh giá sẽ chưa xuất hiện ở đó — hãy kiểm tra bằng trang tìm kiếm.",
-    "findMe": "Tìm tôi trên trang tìm kiếm →"
+    "findMe": "Tìm tôi trên trang tìm kiếm →",
+    "suspendedTitle": "Hồ sơ đang bị tạm đình chỉ",
+    "suspendedBody": "Hồ sơ của bạn đã được ẩn khỏi trang tìm kiếm và trang chủ. Dữ liệu vẫn được giữ nguyên. Liên hệ ban quản trị để được xem xét lại."
   },
   "location": {
     "province": "Tỉnh / Thành phố",
