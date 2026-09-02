@@ -11,6 +11,10 @@
 #   DEPLOY_MODE=build  — build ngay trên server từ code trong APP_DIR.
 #       Dùng cho kịch bản MỘT SERVER không có registry (VPS, Oracle Free Tier).
 #       Cần ~2GB RAM trống lúc build Next.js; máy 2GB nên bật swap.
+#
+# Bản mới không healthy thì script TỰ ĐƯA SITE VỀ ảnh đang chạy trước đó rồi
+# thoát khác 0 (deploy thất bại, site vẫn sống). Đặt AUTO_ROLLBACK=0 để giữ
+# nguyên trạng thái hỏng mà mổ xẻ — chỉ nên dùng khi đang gỡ lỗi tại chỗ.
 # =============================================================================
 set -euo pipefail
 
@@ -51,6 +55,7 @@ fi
 # lại là TRƯỚC lúc deploy này. Dump ngay ở đây đảm bảo luôn có bản backup mới
 # hơn bản deploy đang chạy, mà không cần đợi cron.
 SKIP_PRE_DEPLOY_BACKUP="${SKIP_PRE_DEPLOY_BACKUP:-0}"
+PRE_DEPLOY_BACKUP=""
 if [[ "${SKIP_PRE_DEPLOY_BACKUP}" == "1" ]]; then
   log "SKIP_PRE_DEPLOY_BACKUP=1 — bỏ qua backup trước deploy."
 elif [[ -z "$(docker compose -f "${COMPOSE_FILE}" ps -q db 2>/dev/null)" ]]; then
@@ -63,6 +68,10 @@ else
     echo "chấp nhận rủi ro này (ví dụ: đã biết trước vì sao backup đang lỗi)." >&2
     exit 1
   fi
+  # File mới nhất trong thư mục backup chính là bản vừa dump. Thông báo rollback
+  # cần trỏ được vào MỘT file cụ thể — lúc đó người đọc đang xử lý sự cố, không
+  # phải lúc để họ đi tìm.
+  PRE_DEPLOY_BACKUP="$(ls -1t "${APP_DIR}/backups/postgres/"*.sql.gz 2>/dev/null | head -n1 || true)"
 fi
 
 if [[ -n "${IMAGE_TAG}" ]]; then
@@ -85,6 +94,29 @@ else
   else
     log "Không có IMAGE_TAG và không phải git repo — dùng image trong .env."
   fi
+fi
+
+# ---- Ghi lại ảnh đang chạy, để rollback được nếu bản mới không healthy ------
+# Lưu IMAGE ID (sha256), KHÔNG lưu tag: ở DEPLOY_MODE=build cả bản cũ lẫn bản
+# mới đều mang tag `ptmatch-*:latest`, nên rollback theo tag sẽ dựng lại đúng
+# bản vừa hỏng. ID trỏ chính xác một ảnh nên dùng được cho cả hai chế độ.
+#
+# Phải chạy TRƯỚC `up -d` — sau đó thì container cũ không còn để hỏi nữa.
+running_image_id() {
+  local service="$1" cid
+  cid="$(docker compose -f "${COMPOSE_FILE}" ps -q "${service}" 2>/dev/null | head -n1)"
+  if [[ -z "${cid}" ]]; then
+    return 0
+  fi
+  docker inspect --format '{{.Image}}' "${cid}" 2>/dev/null || true
+}
+
+PREV_BACKEND_IMAGE_ID="$(running_image_id backend)"
+PREV_FRONTEND_IMAGE_ID="$(running_image_id frontend)"
+if [[ -n "${PREV_BACKEND_IMAGE_ID}" || -n "${PREV_FRONTEND_IMAGE_ID}" ]]; then
+  log "Phiên bản đang chạy (mốc rollback): backend=${PREV_BACKEND_IMAGE_ID:0:19} frontend=${PREV_FRONTEND_IMAGE_ID:0:19}"
+else
+  log "Chưa có service nào đang chạy — deploy này KHÔNG có mốc để rollback."
 fi
 
 # DEPLOY_MODE quyết định image ở đâu ra. KHÔNG bao giờ để Compose tự chọn.
@@ -143,29 +175,98 @@ esac
 log "Reload nginx (container backend/frontend vừa đổi IP)..."
 docker compose -f "${COMPOSE_FILE}" restart nginx
 
-# Health check: deploy chỉ được coi là xong khi API thực sự trả lời. Không có
-# bước này thì một migration hỏng hay image lỗi vẫn báo "Deploy xong".
-log "Chờ backend healthy..."
-HEALTH_OK=0
-for _ in $(seq 1 30); do
-  # Gọi từ trong container nginx: kiểm tra luôn cả việc nginx phân giải được
-  # tên `backend` sau khi restart, chứ không chỉ kiểm tra backend còn sống.
-  if docker compose -f "${COMPOSE_FILE}" exec -T nginx \
-      wget -q -O /dev/null http://backend:8000/api/health 2>/dev/null; then
-    HEALTH_OK=1
-    break
-  fi
-  sleep 2
-done
+# Health check: deploy chỉ được coi là xong khi service thực sự trả lời. Không
+# có bước này thì một migration hỏng hay image lỗi vẫn báo "Deploy xong".
+#
+# Gọi từ TRONG container nginx: kiểm tra luôn cả việc nginx phân giải được tên
+# service sau khi restart, chứ không chỉ kiểm tra service còn sống — đúng cái
+# lỗi mà lệnh `restart nginx` ở trên tồn tại để tránh.
+wait_healthy() {
+  local service="$1" url="$2"
+  log "Chờ ${service} healthy..."
+  for _ in $(seq 1 30); do
+    if docker compose -f "${COMPOSE_FILE}" exec -T nginx \
+        wget -q -O /dev/null "${url}" 2>/dev/null; then
+      log "${service} healthy."
+      return 0
+    fi
+    sleep 2
+  done
 
-if [[ "${HEALTH_OK}" -ne 1 ]]; then
-  log "LỖI: backend không trả lời /api/health sau 60s. Log 50 dòng cuối:"
-  docker compose -f "${COMPOSE_FILE}" logs --tail=50 backend >&2 || true
-  log "Stack vẫn đang chạy — kiểm tra log rồi rollback bằng:"
+  log "LỖI: ${service} không trả lời ${url} sau 60s. Log 50 dòng cuối:"
+  docker compose -f "${COMPOSE_FILE}" logs --tail=50 "${service}" >&2 || true
+  return 1
+}
+
+# Kiểm cả hai service. Frontend trước đây KHÔNG được kiểm: một image frontend
+# hỏng, một route handler lỗi lúc khởi động hay `standalone` thiếu file vẫn báo
+# "Deploy xong" trong khi cả site trả 502 — chỉ người dùng mới phát hiện. Dùng
+# đúng đường dẫn healthcheck của compose (`/`) nên hai chỗ không thể lệch nhau.
+deploy_healthy() {
+  wait_healthy backend http://backend:8000/api/health || return 1
+  wait_healthy frontend http://frontend:3000/ || return 1
+  return 0
+}
+
+manual_rollback_hint() {
+  log "Rollback thủ công:"
   log "  IMAGE_TAG=<tag_cũ> GCP_PROJECT_ID=${GCP_PROJECT_ID:-<project>} bash scripts/deploy.sh"
+}
+
+# Đưa backend/frontend về đúng ảnh đang chạy trước deploy này.
+#
+# KHÔNG chạm tới DB. Nếu bản mới đã áp migration thì entrypoint đã chạy
+# `alembic upgrade head` từ lúc container mới lên, và không có lệnh nào ở đây
+# hạ schema xuống được — đó là lý do khối cảnh báo dưới trỏ tới bản dump
+# trước deploy thay vì hứa đã phục hồi trọn vẹn.
+rollback() {
+  if [[ -z "${PREV_BACKEND_IMAGE_ID}" && -z "${PREV_FRONTEND_IMAGE_ID}" ]]; then
+    log "Không có mốc rollback (deploy đầu tiên?) — giữ nguyên stack."
+    return 1
+  fi
+
+  log "ROLLBACK: đưa service về ảnh trước deploy..."
+  if [[ -n "${PREV_BACKEND_IMAGE_ID}" ]]; then
+    export BACKEND_IMAGE="${PREV_BACKEND_IMAGE_ID}"
+  else
+    log "  (backend không chạy trước deploy — giữ ảnh hiện tại)"
+  fi
+  if [[ -n "${PREV_FRONTEND_IMAGE_ID}" ]]; then
+    export FRONTEND_IMAGE="${PREV_FRONTEND_IMAGE_ID}"
+  else
+    log "  (frontend không chạy trước deploy — giữ ảnh hiện tại)"
+  fi
+
+  # --no-build cả ở DEPLOY_MODE=build: rollback dựng lại ảnh CŨ theo ID, build
+  # lại từ code trên server chỉ cho ra đúng bản vừa hỏng.
+  if ! docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans --no-build; then
+    log "ROLLBACK: lệnh 'up -d' thất bại."
+    return 1
+  fi
+  docker compose -f "${COMPOSE_FILE}" restart nginx
+  deploy_healthy || return 1
+  return 0
+}
+
+AUTO_ROLLBACK="${AUTO_ROLLBACK:-1}"
+
+if deploy_healthy; then
+  log "Backend + frontend healthy."
+elif [[ "${AUTO_ROLLBACK}" != "1" ]]; then
+  log "Deploy KHÔNG healthy. AUTO_ROLLBACK=${AUTO_ROLLBACK} — giữ nguyên stack để mổ xẻ."
+  manual_rollback_hint
+  exit 1
+elif rollback; then
+  log "ROLLBACK XONG — site đã trở lại phiên bản trước. Deploy này THẤT BẠI."
+  log "LƯU Ý: rollback chỉ đổi ảnh, KHÔNG hạ schema DB. Nếu bản vừa hỏng đã áp"
+  log "migration, code cũ có thể không khớp schema mới. Bản dump trước deploy:"
+  log "  ${PRE_DEPLOY_BACKUP:-<không có: backup bị bỏ qua>}"
+  exit 1
+else
+  log "ROLLBACK THẤT BẠI — site đang ở trạng thái hỏng, cần can thiệp tay NGAY."
+  manual_rollback_hint
   exit 1
 fi
-log "Backend healthy."
 
 log "Dọn image cũ..."
 docker image prune -f >/dev/null
