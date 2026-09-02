@@ -6,7 +6,7 @@ import AdminShell from "@/components/AdminShell";
 import RatingStars from "@/components/RatingStars";
 import { Loading, Refreshing, repeat, Skeleton } from "@/components/Skeleton";
 import { ApiError, apiFetch } from "@/lib/api";
-import SuspendPTButton from "@/components/SuspendPTButton";
+import PTModerationActions from "@/components/PTModerationActions";
 import { timeAgo } from "@/lib/format";
 import type { AdminReviewItem, AdminReviewList } from "@/lib/types";
 
@@ -279,10 +279,12 @@ function ReviewsContent() {
                     {/* Xử lý HỒ SƠ, không phải đánh giá: gỡ một đánh giá xấu chỉ
                         dọn triệu chứng khi vấn đề là chính PT. Đặt ở đây vì đây
                         là nơi báo cáo đi vào. */}
-                    <SuspendPTButton
+                    <PTModerationActions
                       slug={item.pt_slug}
                       ptName={item.pt_name}
                       suspended={item.pt_suspended}
+                      banned={item.pt_banned}
+                      deleted={item.pt_deleted}
                       onChanged={() => load()}
                     />
                     {item.approved_at ? (

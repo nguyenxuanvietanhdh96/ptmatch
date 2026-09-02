@@ -117,6 +117,11 @@ class PTProfile(Base):
         DateTime(timezone=True), nullable=True
     )
     suspended_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Hồ sơ thuộc một tài khoản đã đóng. Khác suspended_at (biện pháp tạm, có
+    # thể bỏ): đây là trạng thái cuối, và dữ liệu nhận dạng đã bị khử.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     avg_rating: Mapped[float] = mapped_column(
         Float, nullable=False, default=0, server_default=text("0")
     )

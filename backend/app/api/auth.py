@@ -210,6 +210,20 @@ async def _authenticate(db: AsyncSession, email: str, password: str) -> User:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+    # Nói rõ trạng thái ở đây là an toàn: chỉ tới được sau khi mật khẩu đã đúng,
+    # nên không biếu ai công cụ dò tài khoản. Và cần thiết — người bị chặn mà chỉ
+    # nhận "sai mật khẩu" sẽ đi đặt lại mật khẩu mãi không hiểu vì sao.
+    if user.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản này đã được đóng.",
+        )
+    if user.banned_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản này đã bị khoá."
+            + (" Lý do: %s" % user.ban_reason if user.ban_reason else ""),
+        )
     return user
 
 

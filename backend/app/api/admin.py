@@ -49,9 +49,13 @@ from app.schemas.admin import (
     FeedbackListOut,
     LeadOpsOverview,
     PTResponsiveness,
+    PTAccountState,
+    PTBanRequest,
+    PTCloseRequest,
     PTSuspendRequest,
     PTSuspendResult,
 )
+from app.services.account_closure import ban_user, close_account, unban_user
 from app.services.labels import specialty_label
 from app.services.rating import refresh_pt_rating
 
@@ -432,9 +436,16 @@ async def list_reviews_for_moderation(
     luôn là đánh giá điểm thấp gửi ẩn danh.
     """
     stmt = select(
-        Review, PTProfile.full_name, PTProfile.slug, PTProfile.suspended_at
+        Review,
+        PTProfile.full_name,
+        PTProfile.slug,
+        PTProfile.suspended_at,
+        User.banned_at,
+        User.deleted_at,
     ).join(
         PTProfile, PTProfile.id == Review.pt_profile_id
+    ).join(
+        User, User.id == PTProfile.user_id
     )
     if only_anonymous:
         stmt = stmt.where(Review.trainee_id.is_(None))
@@ -459,6 +470,8 @@ async def list_reviews_for_moderation(
                 pt_name=pt_name,
                 pt_slug=pt_slug,
                 pt_suspended=pt_suspended_at is not None,
+                pt_banned=pt_banned_at is not None,
+                pt_deleted=pt_deleted_at is not None,
                 reviewer_name=r.reviewer_name,
                 reviewer_phone=r.reviewer_phone,
                 rating=r.rating,
@@ -469,7 +482,14 @@ async def list_reviews_for_moderation(
                 created_at=r.created_at,
                 approved_at=r.approved_at,
             )
-            for r, pt_name, pt_slug, pt_suspended_at in rows
+            for (
+                r,
+                pt_name,
+                pt_slug,
+                pt_suspended_at,
+                pt_banned_at,
+                pt_deleted_at,
+            ) in rows
         ],
         total=int(total or 0),
         page=page,
@@ -592,3 +612,110 @@ async def suspend_pt_profile(
         suspended_at=profile.suspended_at,
         suspended_reason=profile.suspended_reason,
     )
+
+
+async def _profile_and_owner(db: AsyncSession, slug: str) -> tuple[PTProfile, User]:
+    row = (
+        await db.execute(
+            select(PTProfile, User)
+            .join(User, User.id == PTProfile.user_id)
+            .where(PTProfile.slug == slug)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ PT")
+    return row[0], row[1]
+
+
+def _account_state(profile: PTProfile, owner: User) -> PTAccountState:
+    return PTAccountState(
+        slug=profile.slug,
+        full_name=profile.full_name,
+        suspended=profile.suspended_at is not None,
+        suspended_reason=profile.suspended_reason,
+        banned=owner.banned_at is not None,
+        ban_reason=owner.ban_reason,
+        deleted=owner.deleted_at is not None,
+    )
+
+
+@router.patch("/pts/{slug}/ban", response_model=PTAccountState)
+async def ban_pt_account(
+    slug: str,
+    body: PTBanRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Khoá (hoặc mở khoá) tài khoản chủ hồ sơ này.
+
+    Mạnh hơn đình chỉ hồ sơ: đình chỉ chỉ ẩn hồ sơ, PT vẫn đăng nhập và vẫn xem
+    được danh sách lead cũ kèm số điện thoại học viên. Khoá tài khoản cắt hẳn
+    đường vào, và cắt cả phiên đang mở.
+
+    Đình chỉ hồ sơ KHÔNG bị đặt kèm ở đây: hai biện pháp độc lập, gộp lại thì
+    mở khoá sẽ vô tình bỏ luôn đình chỉ đang có lý do riêng.
+    """
+    profile, owner = await _profile_and_owner(db, slug)
+    if owner.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="Tài khoản này đã được đóng")
+
+    if body.banned:
+        reason = (body.reason or "").strip()
+        if not reason:
+            raise HTTPException(
+                status_code=422, detail="Phải ghi lý do khi khoá tài khoản"
+            )
+        ban_user(owner, reason)
+    else:
+        unban_user(owner)
+
+    await db.commit()
+    await db.refresh(profile)
+    await db.refresh(owner)
+    logger.info(
+        "admin %s %s tài khoản %s (hồ sơ %s)%s",
+        admin.email,
+        "khoá" if body.banned else "mở khoá",
+        owner.email,
+        slug,
+        " — lý do: %s" % owner.ban_reason if owner.ban_reason else "",
+    )
+    return _account_state(profile, owner)
+
+
+@router.post("/pts/{slug}/close", response_model=PTAccountState)
+async def close_pt_account(
+    slug: str,
+    body: PTCloseRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Đóng tài khoản PT: khử danh tính + xoá mềm. KHÔNG hoàn tác được.
+
+    Xem app/services/account_closure.py để biết cái gì bị khử và cái gì được
+    giữ, cùng lý do (chính sách quyền riêng tư hứa cả "xoá dữ liệu tài khoản"
+    lẫn "giữ lead để đối chiếu tranh chấp", mà lead chứa số của học viên).
+
+    POST chứ không phải DELETE: đây không phải xoá một tài nguyên theo nghĩa
+    HTTP — hàng dữ liệu vẫn còn, và có body cần xác nhận.
+    """
+    profile, owner = await _profile_and_owner(db, slug)
+    if body.confirm_slug.strip() != slug:
+        raise HTTPException(
+            status_code=422, detail="Chuỗi xác nhận không khớp slug hồ sơ"
+        )
+    if owner.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="Tài khoản này đã được đóng")
+
+    old_email = owner.email
+    old_slug = await close_account(db, owner)
+    await db.commit()
+    await db.refresh(profile)
+    await db.refresh(owner)
+    logger.info(
+        "admin %s đóng tài khoản %s (hồ sơ %s) — đã khử danh tính",
+        admin.email,
+        old_email,
+        old_slug or slug,
+    )
+    return _account_state(profile, owner)

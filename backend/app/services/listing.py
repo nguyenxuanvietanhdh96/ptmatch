@@ -53,10 +53,11 @@ def per_session_price_expr():
 def listable_clause():
     """Mệnh đề WHERE cho mọi chỗ liệt kê hồ sơ ra công khai."""
     return and_(
-        # Đình chỉ bởi admin. Phải nằm ở ĐÂY, không phải chỉ ở một truy vấn nào
-        # đó: hồ sơ bị xử lý phải rời khỏi /pts, sitemap và trang chủ cùng lúc,
-        # nếu không thì "đã xử lý" chỉ đúng ở một chỗ.
+        # Đình chỉ bởi admin và tài khoản đã đóng. Phải nằm ở ĐÂY, không phải chỉ
+        # ở một truy vấn nào đó: hồ sơ bị xử lý phải rời khỏi /pts, sitemap và
+        # trang chủ cùng lúc, nếu không thì "đã xử lý" chỉ đúng ở một chỗ.
         PTProfile.suspended_at.is_(None),
+        PTProfile.deleted_at.is_(None),
         PTProfile.is_active.is_(True),
         func.coalesce(PTProfile.avatar_url, "") != "",
         per_session_price_expr() > 0,
@@ -85,6 +86,7 @@ def reachable_clause():
     return and_(
         PTProfile.is_active.is_(True),
         PTProfile.suspended_at.is_(None),
+        PTProfile.deleted_at.is_(None),
     )
 
 

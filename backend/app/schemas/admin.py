@@ -150,6 +150,8 @@ class AdminReviewItem(BaseModel):
     # Hồ sơ PT này đang bị đình chỉ hay không. Có ở đây để giao diện kiểm duyệt
     # không mời admin "đình chỉ" một hồ sơ đã bị đình chỉ rồi.
     pt_suspended: bool = False
+    pt_banned: bool = False
+    pt_deleted: bool = False
     reviewer_name: str
     # SĐT người viết — admin cần để nhận ra một người spam nhiều PT bằng nhiều số.
     reviewer_phone: Optional[str] = None
@@ -198,3 +200,33 @@ class PTSuspendResult(BaseModel):
     suspended: bool
     suspended_at: Optional[datetime] = None
     suspended_reason: Optional[str] = None
+
+
+class PTBanRequest(BaseModel):
+    """Khoá / mở khoá tài khoản của một PT. `reason` bắt buộc khi khoá."""
+
+    banned: bool
+    reason: Optional[str] = Field(default=None, min_length=3, max_length=500)
+
+
+class PTAccountState(BaseModel):
+    """Trạng thái xử lý của một hồ sơ + tài khoản chủ hồ sơ."""
+
+    slug: str
+    full_name: Optional[str] = None
+    suspended: bool = False
+    suspended_reason: Optional[str] = None
+    banned: bool = False
+    ban_reason: Optional[str] = None
+    deleted: bool = False
+
+
+class PTCloseRequest(BaseModel):
+    """Đóng tài khoản — KHÔNG hoàn tác được.
+
+    `confirm_slug` phải khớp slug trên URL. Một thao tác không thể hoàn tác thì
+    xác nhận bằng một cú bấm là không đủ: đây là hàng rào chống bấm nhầm dòng
+    trong danh sách, kiểu hàng rào mà trang xoá đánh giá đã dùng (hai bước).
+    """
+
+    confirm_slug: str = Field(min_length=1, max_length=80)

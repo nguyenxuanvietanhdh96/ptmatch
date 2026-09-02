@@ -267,8 +267,10 @@ export interface AdminReviewItem {
   id: string;
   pt_name: string;
   pt_slug: string;
-  /** Hồ sơ PT này đang bị đình chỉ — để không mời admin đình chỉ lần nữa. */
+  /** Trạng thái xử lý của PT — để giao diện không mời làm lại việc đã làm. */
   pt_suspended: boolean;
+  pt_banned: boolean;
+  pt_deleted: boolean;
   reviewer_name: string;
   reviewer_phone?: string | null;
   rating: number;

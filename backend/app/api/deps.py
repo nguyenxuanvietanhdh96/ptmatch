@@ -61,6 +61,11 @@ async def get_current_user(
         raise _credentials_error("User not found")
     if token_predates_credentials_change(user, payload):
         raise _credentials_error("Invalid or expired token")
+    # Ban và xoá đều đẩy credentials_changed_at lên, nên dòng trên đã chặn được
+    # token cũ. Kiểm thêm ở đây vì đó là suy luận bắc cầu qua một cột khác: nếu
+    # sau này có đường nào đặt banned_at mà quên mốc thu hồi, chỗ này vẫn đúng.
+    if user.banned_at is not None or user.deleted_at is not None:
+        raise _credentials_error("Tài khoản không còn hiệu lực")
     return user
 
 
@@ -81,7 +86,14 @@ async def get_optional_user(
     except (jwt.InvalidTokenError, ValueError):
         return None
     user = await db.get(User, user_id)
-    if user is not None and token_predates_credentials_change(user, payload):
+    if user is None:
+        return None
+    if token_predates_credentials_change(user, payload):
+        return None
+    # Cùng lý do như get_current_user. Ở đây trả None thay vì lỗi: endpoint dùng
+    # dependency này vốn chạy được khi vô danh, nên tài khoản bị khoá được đối xử
+    # như khách — không phải lỗi, chỉ là không còn được gắn danh tính.
+    if user.banned_at is not None or user.deleted_at is not None:
         return None
     return user
 

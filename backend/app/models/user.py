@@ -75,3 +75,14 @@ class User(Base):
     credentials_changed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Ban: không đăng nhập được nữa. Đặt cùng lúc với credentials_changed_at để
+    # phiên đang mở chết ngay, không sống tới hết hạn token.
+    banned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ban_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Xoá mềm. Hàng được giữ vì lead/review/favorite đều trỏ khoá ngoại về đây;
+    # thông tin nhận dạng bị khử ngay lúc xoá (xem services/account_closure.py).
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
