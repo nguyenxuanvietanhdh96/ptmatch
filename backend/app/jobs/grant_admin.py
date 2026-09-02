@@ -1,8 +1,13 @@
-"""Cấp (hoặc thu hồi) quyền admin cho một tài khoản đã tồn tại.
+"""Đổi role của một tài khoản đã tồn tại.
 
 Usage:
-    python -m app.jobs.grant_admin <email>
-    python -m app.jobs.grant_admin <email> --revoke
+    python -m app.jobs.grant_admin <email>                # -> admin
+    python -m app.jobs.grant_admin <email> --revoke       # -> trainee
+    python -m app.jobs.grant_admin <email> --role pt      # -> role chỉ định
+
+`--role` có mặt vì `--revoke` giả định tài khoản vốn là trainee. Nâng một tài
+khoản PT lên admin rồi revoke sẽ biến nó thành trainee, tức là mất luôn hồ sơ
+PT — role là cột đơn, không có đường quay lại nếu script không nói được "về pt".
 
 Trên server:
     docker compose -f docker-compose.prod.yml exec backend \\
@@ -25,9 +30,7 @@ from app.core.database import async_session_factory, engine
 from app.models import User, UserRole
 
 
-async def run(email: str, revoke: bool) -> int:
-    target_role = UserRole.trainee if revoke else UserRole.admin
-
+async def run(email: str, target_role: UserRole) -> int:
     async with async_session_factory() as db:
         user = await db.scalar(select(User).where(User.email == email.lower().strip()))
         if user is None:
@@ -43,19 +46,64 @@ async def run(email: str, revoke: bool) -> int:
         user.role = target_role
         await db.commit()
         print("%s: %s -> %s" % (user.email, old, target_role.value))
+
+        # /admin/login cố ý chỉ nhận mật khẩu, không OAuth (xem docstring của
+        # admin_login). Một tài khoản tạo qua Google/Facebook không có
+        # password_hash, nên cấp admin cho nó tạo ra một quản trị viên KHÔNG THỂ
+        # đăng nhập — và thông báo nhận được là "Incorrect email or password",
+        # chỉ về đúng chỗ sai.
+        if target_role is UserRole.admin and not user.password_hash:
+            print()
+            print("CẢNH BÁO: tài khoản này không có mật khẩu (đăng ký qua %s)."
+                  % (user.oauth_provider or "OAuth"))
+            print("/admin/login chỉ nhận mật khẩu, nên tài khoản này sẽ KHÔNG")
+            print("đăng nhập được vào khu quản trị. Hãy đăng ký một tài khoản")
+            print("bằng email + mật khẩu ở /register rồi cấp quyền cho nó.")
         return 0
 
 
+def parse_target_role(argv: list[str]) -> UserRole | None:
+    """Role đích từ tham số dòng lệnh; None nếu tham số không hợp lệ."""
+    if "--role" in argv:
+        i = argv.index("--role")
+        if i + 1 >= len(argv):
+            return None
+        try:
+            return UserRole(argv[i + 1].strip().lower())
+        except ValueError:
+            return None
+    if "--revoke" in argv:
+        return UserRole.trainee
+    return UserRole.admin
+
+
 async def main() -> None:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    revoke = "--revoke" in sys.argv[1:]
+    argv = sys.argv[1:]
+    target_role = parse_target_role(argv)
+    if target_role is None:
+        print("--role phải là một trong: %s"
+              % ", ".join(r.value for r in UserRole))
+        raise SystemExit(2)
+
+    # Bỏ cả cờ và giá trị của --role, chỉ còn lại email.
+    args = []
+    skip = False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a == "--role":
+            skip = True
+            continue
+        if not a.startswith("--"):
+            args.append(a)
 
     if len(args) != 1:
         print(__doc__)
         raise SystemExit(2)
 
     try:
-        raise SystemExit(await run(args[0], revoke))
+        raise SystemExit(await run(args[0], target_role))
     finally:
         await engine.dispose()
 
