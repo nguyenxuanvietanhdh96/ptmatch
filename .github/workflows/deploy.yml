@@ -171,6 +171,9 @@ jobs:
       - name: Kiểm trang Next và API
         env:
           SITE_URL: ${{ vars.SITE_URL || 'https://ptmatch.vn' }}
+          # Cách nhau bởi dấu cách. Mặc định chỉ 'google' vì hiện chỉ provider
+          # đó có credential thật trên production.
+          OAUTH_PROVIDERS: ${{ vars.OAUTH_PROVIDERS || 'google' }}
         run: |
           check() {
             local path="$1" code
@@ -191,6 +194,33 @@ jobs:
             return 1
           }
 
+          # Provider OAuth phải CHUYỂN HƯỚNG sang đúng nhà cung cấp. Backend
+          # trả 503 khi thiếu client id/secret, nên một biến .env bị xoá nhầm
+          # hay credential hết hạn sẽ tắt lặng lẽ nút đăng nhập — không log,
+          # không cảnh báo, chỉ có người dùng bấm vào rồi bỏ đi. Kiểm cả host
+          # đích để bắt luôn trường hợp cấu hình trỏ nhầm provider.
+          check_oauth() {
+            local provider="$1" expect_host="$2" code target out
+            for attempt in 1 2 3; do
+              # Gán chuỗi rồi tách, KHÔNG dùng `read`: `-w` của curl không in
+              # newline cuối, nên `read` trả mã lỗi dù đã đọc đủ giá trị — và
+              # nhánh xử lý lỗi sẽ ghi đè kết quả thật thành 000.
+              out="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' \
+                --max-time 15 \
+                "${SITE_URL}/api/auth/${provider}/login?role=trainee")" || out="000 "
+              code="${out%% *}"
+              target="${out#* }"
+              if [[ "$code" == "307" && "$target" == *"$expect_host"* ]]; then
+                echo "OK   oauth/${provider} -> 307 ${expect_host}"
+                return 0
+              fi
+              echo "  thu lai ($attempt/3): oauth/${provider} -> $code ${target:-<khong co redirect>}"
+              sleep 5
+            done
+            echo "LOI  oauth/${provider} -> $code (mong doi 307 toi ${expect_host})" >&2
+            return 1
+          }
+
           # Kiểm cả hai vì nginx định tuyến chúng tới hai upstream khác nhau;
           # chỉ kiểm một thì hỏng cái còn lại vẫn xanh. Không dừng ở lỗi đầu:
           # một đường hỏng hay cả hai hỏng là khác nguyên nhân, mà chạy lại
@@ -198,4 +228,18 @@ jobs:
           rc=0
           check /           || rc=1
           check /api/health || rc=1
+
+          # Danh sách provider ĐANG BẬT, không phải mọi provider có nút. Thêm
+          # 'facebook' vào biến OAUTH_PROVIDERS sau khi điền credential thật —
+          # để sẵn ở đây thì CI đỏ cho tới lúc đó, và một CI đỏ thường trực là
+          # một CI không ai còn đọc.
+          for provider in ${OAUTH_PROVIDERS:-google}; do
+            case "$provider" in
+              google)   check_oauth google accounts.google.com    || rc=1 ;;
+              facebook) check_oauth facebook facebook.com          || rc=1 ;;
+              zalo)     check_oauth zalo oauth.zaloapp.com         || rc=1 ;;
+              *) echo "LOI  provider khong biet: $provider" >&2; rc=1 ;;
+            esac
+          done
+
           exit "$rc"
