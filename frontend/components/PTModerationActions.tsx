@@ -136,12 +136,26 @@ export default function PTModerationActions({
           viên — dữ liệu của người khác, cần cho việc đối chiếu khi có tranh chấp.
         </p>
         {/* Gõ lại slug: một thao tác không hoàn tác được thì xác nhận bằng một
-            cú bấm là không đủ, nhất là khi nút nằm trong một danh sách dài. */}
+            cú bấm là không đủ, nhất là khi nút nằm trong một danh sách dài. CỐ Ý
+            không điền sẵn — điền sẵn thì hàng rào biến thành một cú bấm, đúng
+            thứ nó tồn tại để ngăn.
+
+            Slug hiện ở nhãn chứ không chỉ trong placeholder: placeholder mất
+            ngay khi gõ ký tự đầu, nên gõ sai một chữ là mất luôn thứ để đối
+            chiếu. */}
+        <label className="mt-2 block text-xs text-rose-900" htmlFor={`confirm-${slug}`}>
+          Gõ lại{" "}
+          <code className="select-all rounded bg-white px-1 py-0.5 font-semibold ring-1 ring-rose-200">
+            {slug}
+          </code>{" "}
+          để xác nhận:
+        </label>
         <input
+          id={`confirm-${slug}`}
           value={confirmSlug}
           onChange={(e) => setConfirmSlug(e.target.value)}
-          placeholder={`Gõ "${slug}" để xác nhận`}
-          className="input mt-2 bg-white"
+          autoComplete="off"
+          className="input mt-1 bg-white"
         />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <button
