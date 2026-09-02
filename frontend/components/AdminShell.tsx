@@ -63,11 +63,20 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         <h1 className="text-xl font-bold text-slate-900">Trang này chỉ dành cho admin</h1>
         <p className="mt-2 text-sm text-slate-500">
           Tài khoản <strong>{getUser()?.email}</strong> không có quyền xem số liệu vận
-          hành. Quyền admin được cấp bằng lệnh trên server:
+          hành.
         </p>
-        <code className="mt-3 block rounded-lg bg-slate-50 p-3 text-left text-xs text-slate-600">
-          python -m app.jobs.grant_admin {getUser()?.email ?? "email@cua-ban"}
-        </code>
+        {/*
+          Lệnh cấp quyền chỉ hiện ở dev. Trên production nó là thông báo viết cho
+          lập trình viên nhưng hiện cho BẤT KỲ ai đăng nhập rồi mở /admin — tiết
+          lộ đường dẫn module backend và cơ chế phân quyền, thứ đầu tiên kẻ tấn
+          công cần biết nếu chạm được vào một lỗ thực thi mã. Người dùng thật
+          cũng chẳng làm gì được với một lệnh python.
+        */}
+        {process.env.NODE_ENV !== "production" && (
+          <code className="mt-3 block rounded-lg bg-slate-50 p-3 text-left text-xs text-slate-600">
+            python -m app.jobs.grant_admin {getUser()?.email ?? "email@cua-ban"}
+          </code>
+        )}
         <div className="mt-6 flex justify-center gap-3">
           <Link href="/" className="btn-secondary">Về trang chủ</Link>
           <Link href="/admin/login" className="btn-primary">Đăng nhập tài khoản khác</Link>
