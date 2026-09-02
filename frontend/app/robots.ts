@@ -10,8 +10,10 @@ export default function robots(): MetadataRoute.Robots {
       // xem được yêu cầu của người khác. Trang cũng đã tự đặt noindex.
       // /reset-password: token đặt lại mật khẩu nằm trong URL, cùng lý do
       // với /track. /welcome chỉ có nghĩa ngay sau khi đăng ký xong.
+      // /internal: endpoint POST nội bộ (xoá cache ISR), không có nội dung.
       disallow: [
         "/dashboard",
+        "/internal",
         "/account",
         "/login",
         "/register",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import ImageUploader from "@/components/ImageUploader";
 import { apiFetch, ApiError } from "@/lib/api";
+import { revalidatePublicPages } from "@/lib/revalidate";
 import type { PortfolioItem, PortfolioType, PTProfile } from "@/lib/types";
 import { useTranslations } from "next-intl";
 
@@ -139,6 +140,9 @@ export default function PortfolioPage() {
       setItems((list) => [...list, created]);
       setForm(EMPTY_ITEM);
       setShowForm(false);
+      // Portfolio hiện trên trang hồ sơ công khai (ISR 300 giây) — không xoá
+      // cache thì PT thêm ảnh xong đi kiểm tra vẫn thấy trang cũ.
+      revalidatePublicPages();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("addFailed"));
     } finally {
@@ -152,6 +156,7 @@ export default function PortfolioPage() {
     try {
       await apiFetch(`/api/pts/me/portfolio/${item.id}`, { method: "DELETE", auth: true });
       setItems((list) => list.filter((i) => i.id !== item.id));
+      revalidatePublicPages();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("deleteFailed"));
     }
@@ -169,6 +174,7 @@ export default function PortfolioPage() {
         auth: true,
         body: JSON.stringify({ sort_order: sortOrder }),
       });
+      revalidatePublicPages();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("reorderFailed"));
     }

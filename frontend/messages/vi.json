@@ -152,11 +152,13 @@
     "avatar": "Ảnh đại diện",
     "price": "Giá theo buổi",
     "location": "Khu vực hoạt động",
-    "liveTitle": "Hồ sơ của bạn đang hiển thị công khai và có thể được tìm thấy.",
+    "liveTitle": "Hồ sơ của bạn đã đủ điều kiện và đang hiển thị trên trang tìm kiếm.",
     "viewMine": "Xem trang của tôi →",
     "pendingTitle": "Hồ sơ chưa hiển thị công khai",
     "pendingBody": "Học viên chưa tìm thấy bạn trên trang tìm kiếm. Còn thiếu:",
-    "fix": "Bổ sung ngay"
+    "fix": "Bổ sung ngay",
+    "homeNote": "Mục “PT nổi bật” ở trang chủ chỉ điểm 6 hồ sơ có đánh giá cao nhất, nên hồ sơ mới chưa có đánh giá sẽ chưa xuất hiện ở đó — hãy kiểm tra bằng trang tìm kiếm.",
+    "findMe": "Tìm tôi trên trang tìm kiếm →"
   },
   "location": {
     "province": "Tỉnh / Thành phố",

@@ -6,6 +6,7 @@ import ImageUploader from "@/components/ImageUploader";
 import ListingChecklist from "@/components/ListingChecklist";
 import LocationSelect from "@/components/LocationSelect";
 import { apiFetch, ApiError } from "@/lib/api";
+import { revalidatePublicPages } from "@/lib/revalidate";
 import { SPECIALTIES } from "@/lib/constants";
 import type { CertificationItem, PTLocation, PTProfile } from "@/lib/types";
 import { useTranslations } from "next-intl";
@@ -49,6 +50,11 @@ export default function ProfileEditorPage() {
   const t = useTranslations("profileEditor");
   const tLoc = useTranslations("location");
   const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
+  // Tên ĐÃ LƯU, tách khỏi `form.full_name` đang gõ dở — cùng lối như slug /
+  // slugInput. Link "tìm tôi trên trang tìm kiếm" phải tra bằng tên backend
+  // đang giữ; tra bằng tên chưa lưu thì ra 0 kết quả, tức là đẩy PT vào đúng
+  // cái kết luận "hệ thống lỗi" mà khối này tồn tại để tránh.
+  const [savedName, setSavedName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugInput, setSlugInput] = useState("");
   const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
@@ -103,6 +109,7 @@ export default function ProfileEditorPage() {
         const p = await apiFetch<PTProfile>("/api/pts/me", { auth: true });
         setSlug(p.slug ?? "");
         setSlugInput(p.slug ?? "");
+        setSavedName(p.full_name ?? "");
         setLocations(p.locations ?? []);
         setMissingListing(p.missing_listing ?? []);
         setIsActive(p.is_active !== false);
@@ -218,6 +225,7 @@ export default function ProfileEditorPage() {
     try {
       const p = await apiFetch<PTProfile>("/api/pts/me", { auth: true });
       setMissingListing(p.missing_listing ?? []);
+      revalidatePublicPages();
     } catch {
       // Chỉ là chỉ báo phụ — hỏng thì giữ nguyên trạng thái đang hiện, không
       // đáng để bắn thông báo lỗi che mất việc người dùng vừa làm xong.
@@ -274,9 +282,13 @@ export default function ProfileEditorPage() {
         }),
       });
       if (slugInput !== slug) setSlug(slugInput);
+      setSavedName(updated?.full_name ?? form.full_name.trim());
       setSlugStatus("idle");
       setMissingListing(updated?.missing_listing ?? []);
       setMessage({ type: "success", text: t("saved") });
+      // Trang công khai dựng sẵn theo ISR, nên không xoá cache ở đây thì PT bấm
+      // "Xem trang của tôi" ngay sau khi lưu vẫn thấy nội dung cũ.
+      revalidatePublicPages();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
       setMessage({ type: "error", text: err instanceof ApiError ? err.message : t("saveFailed") });
@@ -315,7 +327,7 @@ export default function ProfileEditorPage() {
         </div>
       )}
 
-      <ListingChecklist missing={missingListing} slug={slug} hideAction />
+      <ListingChecklist missing={missingListing} slug={slug} fullName={savedName} hideAction />
 
       {/* URL cá nhân */}
       <section className="card space-y-2 p-5">
