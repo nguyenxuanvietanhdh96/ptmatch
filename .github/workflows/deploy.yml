@@ -141,15 +141,23 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Truyền thẳng image reference đầy đủ thay vì IMAGE_TAG: deploy.sh không
-      # cần biết registry nào, và đường ghép Artifact Registry cũ không còn đúng.
+      # `git pull` TRƯỚC khi gọi script, và đây không phải chi tiết thừa: máy chủ
+      # chạy bản deploy.sh nằm trên đĩa của nó, không phải bản trong commit vừa
+      # build. Thiếu bước này thì mọi sửa đổi với deploy.sh, docker-compose.yml
+      # hay nginx/conf.d không bao giờ tới được production — và lần chạy đầu đã
+      # hỏng đúng vì vậy: script cũ trên server không hiểu BACKEND_IMAGE.
+      # Pull xong mới `bash scripts/deploy.sh` nên không có chuyện script tự ghi
+      # đè lên chính mình giữa lúc đang chạy.
+      #
+      # `sudo env VAR=...` chứ không phải `sudo VAR=...`: sudoers bật env_reset
+      # có thể loại bỏ biến gán trên dòng lệnh, còn `env` thì luôn đặt được.
       - name: Chạy deploy.sh qua IAP
         run: |
           gcloud compute ssh "${{ vars.GCE_INSTANCE || 'ptmatchapp' }}" \
             --zone "${{ vars.GCE_ZONE || 'asia-southeast1-b' }}" \
             --tunnel-through-iap \
             --quiet \
-            --command="cd ${{ vars.APP_DIR || '/var/www/html/ptmatch' }} && sudo BACKEND_IMAGE=${{ env.IMAGE_BACKEND }}:${{ github.sha }} FRONTEND_IMAGE=${{ env.IMAGE_FRONTEND }}:${{ github.sha }} bash scripts/deploy.sh"
+            --command="cd ${{ vars.APP_DIR || '/var/www/html/ptmatch' }} && sudo git pull --ff-only && sudo env BACKEND_IMAGE=${{ env.IMAGE_BACKEND }}:${{ github.sha }} FRONTEND_IMAGE=${{ env.IMAGE_FRONTEND }}:${{ github.sha }} bash scripts/deploy.sh"
 
   # ---- 4. Smoke test từ ngoài Internet ----------------------------------------
   # Health check trong deploy.sh gọi từ TRONG docker network, nên nó không thấy
