@@ -1,0 +1,188 @@
+# =============================================================================
+# PTMatch — CI/CD trên GitHub Actions
+#
+# Thay cho cloudbuild.yaml. Repo là public nên runner tiêu chuẩn miễn phí, và
+# image đẩy lên GHCR cũng miễn phí — không còn phí build-minutes lẫn phí lưu
+# trữ Artifact Registry.
+#
+# Xác thực GCP dùng Workload Identity Federation: runner đổi OIDC token của
+# GitHub lấy access token ngắn hạn của GCP. KHÔNG có khoá service account dài
+# hạn nào nằm trong repo, và cổng 22 vẫn đóng với Internet
+# (infra/environments/prod/env.hcl: ssh_allowed_cidrs = []) vì SSH đi qua IAP.
+#
+# Cần đặt trước ở repo Settings → Secrets and variables → Actions → Variables:
+#   GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_DEPLOY_SA
+# Ba biến còn lại có giá trị mặc định bên dưới, chỉ đặt khi khác:
+#   GCE_INSTANCE, GCE_ZONE, APP_DIR, SITE_URL
+# Không cái nào là bí mật, nên dùng Variables chứ không phải Secrets — để nhìn
+# thấy được cấu hình đang trỏ đi đâu.
+# =============================================================================
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Hai lần deploy chồng nhau lên cùng một server sẽ giẫm lên nhau giữa chừng.
+# Không cancel-in-progress: huỷ giữa lúc deploy.sh đang chạy còn tệ hơn là đợi.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_BACKEND: ghcr.io/${{ github.repository }}-backend
+  IMAGE_FRONTEND: ghcr.io/${{ github.repository }}-frontend
+
+jobs:
+  # ---- 1. Test backend --------------------------------------------------------
+  # Suite có test tích hợp chạy trên PostgreSQL thật (JSONB, generated tsvector,
+  # hàm ptmatch_unaccent) + Redis cho rate limit và revoke token — không mock
+  # được, nên dựng hẳn hai service container.
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ptmatch
+          POSTGRES_PASSWORD: ptmatch_secret
+          POSTGRES_DB: ptmatch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ptmatch"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ảnh test
+        run: docker build -t ptmatch-backend-test ./backend
+
+      # --network host để container test gọi được service container qua
+      # localhost (Actions publish chúng ra cổng của runner).
+      - name: pytest
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgresql+asyncpg://ptmatch:ptmatch_secret@localhost:5432/ptmatch \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            ptmatch-backend-test pytest -q
+
+  # ---- 2. Build + đẩy image lên GHCR ------------------------------------------
+  # Chờ test xong mới build: đẩy image của một commit có test đỏ lên registry
+  # chỉ tạo ra thứ trông như bản dùng được.
+  build-push:
+    needs: backend-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # cache type=gha thay cho `--cache-from :latest` của Cloud Build: không có
+      # nó thì mỗi commit (kể cả commit chỉ sửa tài liệu) đều cài lại toàn bộ
+      # dependency và chạy `next build` từ số không.
+      - name: Backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_BACKEND }}:${{ github.sha }}
+            ${{ env.IMAGE_BACKEND }}:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      # target: runner — khớp docker-compose.yml, không thì lấy nhầm stage dev.
+      - name: Frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          target: runner
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+            ${{ env.IMAGE_FRONTEND }}:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ---- 3. Deploy --------------------------------------------------------------
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # bắt buộc: runner phải phát được OIDC token cho WIF
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Truyền thẳng image reference đầy đủ thay vì IMAGE_TAG: deploy.sh không
+      # cần biết registry nào, và đường ghép Artifact Registry cũ không còn đúng.
+      - name: Chạy deploy.sh qua IAP
+        run: |
+          gcloud compute ssh "${{ vars.GCE_INSTANCE || 'ptmatch-prod' }}" \
+            --zone "${{ vars.GCE_ZONE || 'asia-southeast1-b' }}" \
+            --tunnel-through-iap \
+            --quiet \
+            --command="cd ${{ vars.APP_DIR || '/var/www/html/ptmatch' }} && sudo BACKEND_IMAGE=${{ env.IMAGE_BACKEND }}:${{ github.sha }} FRONTEND_IMAGE=${{ env.IMAGE_FRONTEND }}:${{ github.sha }} bash scripts/deploy.sh"
+
+  # ---- 4. Smoke test từ ngoài Internet ----------------------------------------
+  # Health check trong deploy.sh gọi từ TRONG docker network, nên nó không thấy
+  # chứng chỉ TLS hết hạn, DNS trỏ sai hay nginx chặn ở lớp ngoài — đúng những
+  # thứ chỉ hỏng ở phía người dùng thật. Job này chạy từ runner, ngoài hẳn
+  # server, nên phủ đủ chuỗi: DNS -> TLS -> nginx -> app.
+  smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kiểm trang Next và API
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://ptmatch.vn' }}
+        run: |
+          check() {
+            local path="$1" code
+            # Thử lại vài lần: deploy.sh đã báo healthy, nhưng nginx vừa restart
+            # và kết nối đầu tiên từ ngoài có thể rơi vào đúng khoảnh khắc đó.
+            for attempt in 1 2 3 4 5; do
+              # Gán rồi mới xử lý lỗi: `|| echo 000` sẽ nối thêm vào chuỗi curl
+              # đã in ra, cho ra mã lỗi vô nghĩa đúng lúc đang đọc log.
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${SITE_URL}${path}")" || code="000"
+              if [[ "$code" == "200" ]]; then
+                echo "OK   ${SITE_URL}${path} -> 200"
+                return 0
+              fi
+              echo "  thu lai ($attempt/5): ${SITE_URL}${path} -> $code"
+              sleep 5
+            done
+            echo "LOI  ${SITE_URL}${path} -> $code (mong doi 200)" >&2
+            return 1
+          }
+
+          # Kiểm cả hai vì nginx định tuyến chúng tới hai upstream khác nhau;
+          # chỉ kiểm một thì hỏng cái còn lại vẫn xanh. Không dừng ở lỗi đầu:
+          # một đường hỏng hay cả hai hỏng là khác nguyên nhân, mà chạy lại
+          # cả pipeline để biết thì đắt.
+          rc=0
+          check /           || rc=1
+          check /api/health || rc=1
+          exit "$rc"

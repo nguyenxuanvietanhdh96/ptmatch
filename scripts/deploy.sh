@@ -5,7 +5,8 @@
 # Nguồn image do DEPLOY_MODE quyết định (đặt trong .env, mặc định `pull`):
 #
 #   DEPLOY_MODE=pull   — lấy image từ registry. Có CI đẩy ảnh lên thì dùng cái này.
-#       CI/CD:     IMAGE_TAG=<short_sha> bash scripts/deploy.sh
+#       CI/CD:     BACKEND_IMAGE=<ref> FRONTEND_IMAGE=<ref> bash scripts/deploy.sh
+#       Cũ (AR):   IMAGE_TAG=<short_sha> bash scripts/deploy.sh
 #       Thủ công:  bash scripts/deploy.sh   (dùng BACKEND_IMAGE/FRONTEND_IMAGE trong .env)
 #
 #   DEPLOY_MODE=build  — build ngay trên server từ code trong APP_DIR.
@@ -74,7 +75,17 @@ else
   PRE_DEPLOY_BACKUP="$(ls -1t "${APP_DIR}/backups/postgres/"*.sql.gz 2>/dev/null | head -n1 || true)"
 fi
 
-if [[ -n "${IMAGE_TAG}" ]]; then
+if [[ -n "${BACKEND_IMAGE:-}" || -n "${FRONTEND_IMAGE:-}" ]]; then
+  # Caller đưa thẳng image reference đầy đủ (CI dùng registry nào là việc của
+  # CI: GHCR, Docker Hub, Artifact Registry...). Không suy diễn đường dẫn ở đây
+  # thì deploy.sh không bị buộc vào một nhà cung cấp registry nào.
+  export BACKEND_IMAGE FRONTEND_IMAGE
+  log "Deploy theo image chỉ định sẵn:"
+  log "  BACKEND_IMAGE=${BACKEND_IMAGE:-<không đặt, dùng mặc định trong compose>}"
+  log "  FRONTEND_IMAGE=${FRONTEND_IMAGE:-<không đặt, dùng mặc định trong compose>}"
+elif [[ -n "${IMAGE_TAG}" ]]; then
+  # Đường cũ: chỉ có tag, tự ghép đường dẫn Artifact Registry. Giữ lại để lệnh
+  # gõ tay và tài liệu cũ không gãy.
   # Lấy GCP_PROJECT_ID từ env hoặc .env
   GCP_PROJECT_ID="${GCP_PROJECT_ID:-$(grep -E '^GCP_PROJECT_ID=' .env | tail -n1 | cut -d= -f2- | tr -d '[:space:]')}"
   if [[ -z "${GCP_PROJECT_ID}" ]]; then
