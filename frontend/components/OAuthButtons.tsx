@@ -1,7 +1,20 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
 import type { Role } from "@/lib/types";
+
+type Provider = "google" | "facebook" | "zalo";
+
+const ALL_PROVIDERS: Provider[] = ["google", "facebook", "zalo"];
+
+// Tailwind quét class dưới dạng chuỗi tĩnh trong mã nguồn, nên `sm:grid-cols-${n}`
+// sẽ bị loại khỏi bundle. Tra bảng để mọi lớp đều xuất hiện nguyên vẹn.
+const COLUMNS: Record<number, string> = {
+  1: "sm:grid-cols-1",
+  2: "sm:grid-cols-2",
+  3: "sm:grid-cols-3",
+};
 
 interface Props {
   role: Role;
@@ -14,14 +27,48 @@ interface Props {
 // Trống = cùng origin, xem apiBase() trong lib/api.ts.
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
-function oauthUrl(provider: "google" | "facebook" | "zalo", role: Role, next?: string) {
+function oauthUrl(provider: Provider, role: Role, next?: string) {
   const params = new URLSearchParams({ role });
   if (next) params.set("next", next);
   return `${API_URL}/api/auth/${provider}/login?${params.toString()}`;
 }
 
+/**
+ * Provider nào được hiện là do BACKEND quyết định (GET /api/auth/oauth/providers).
+ *
+ * Trước đây ba nút được vẽ cứng, trong khi provider thiếu credential trả 503 —
+ * người dùng bấm vào rơi thẳng vào trang JSON lỗi trần, ngay tại bước đăng ký,
+ * chỗ đắt nhất để mất người dùng.
+ *
+ * `null` = chưa biết. Trong lúc đó không vẽ gì cả: hiện nút rồi rút lại còn khó
+ * chịu hơn, và nút biến mất dưới ngón tay đang bấm là cách chắc chắn để người
+ * dùng bấm nhầm. Hỏng mạng cũng giữ nguyên `null` — mất tạm mấy nút đăng nhập
+ * mạng xã hội là thiệt hại nhỏ hơn nhiều so với một nút dẫn tới trang lỗi, và
+ * form email/mật khẩu ngay trên vẫn dùng được.
+ */
 export default function OAuthButtons({ role, next }: Props) {
   const t = useTranslations("oauth");
+  const [enabled, setEnabled] = useState<Provider[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_URL}/api/auth/oauth/providers`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!alive || !data) return;
+        const list = Array.isArray(data.providers) ? data.providers : [];
+        setEnabled(ALL_PROVIDERS.filter((p) => list.includes(p)));
+      })
+      .catch(() => {
+        /* giữ null — xem ghi chú ở đầu component */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!enabled || enabled.length === 0) return null;
+
   return (
     <div className="space-y-3">
       <div className="relative flex items-center">
@@ -30,8 +77,8 @@ export default function OAuthButtons({ role, next }: Props) {
         <div className="flex-1 border-t border-slate-200" />
       </div>
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {/* Google */}
+      <div className={`grid grid-cols-1 gap-2 ${COLUMNS[enabled.length] ?? "sm:grid-cols-3"}`}>
+        {enabled.includes("google") && (
         <a
           href={oauthUrl("google", role, next)}
           className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300"
@@ -39,8 +86,9 @@ export default function OAuthButtons({ role, next }: Props) {
           <GoogleIcon />
           Google
         </a>
+        )}
 
-        {/* Facebook */}
+        {enabled.includes("facebook") && (
         <a
           href={oauthUrl("facebook", role, next)}
           className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300"
@@ -48,8 +96,9 @@ export default function OAuthButtons({ role, next }: Props) {
           <FacebookIcon />
           Facebook
         </a>
+        )}
 
-        {/* Zalo */}
+        {enabled.includes("zalo") && (
         <a
           href={oauthUrl("zalo", role, next)}
           className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300"
@@ -57,6 +106,7 @@ export default function OAuthButtons({ role, next }: Props) {
           <ZaloIcon />
           Zalo
         </a>
+        )}
       </div>
     </div>
   );

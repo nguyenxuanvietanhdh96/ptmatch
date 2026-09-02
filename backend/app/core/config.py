@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     zalo_app_secret: str = ""
     zalo_redirect_uri: str = "http://localhost:8000/api/auth/zalo/callback"
 
+    # Provider ĐÃ cấu hình nhưng CHƯA mở cho công chúng, phân tách bởi dấu phẩy.
+    #
+    # "Có client id" và "người lạ đăng nhập được" là hai chuyện khác nhau: một
+    # app Facebook chưa qua App Review vẫn nhận credential và vẫn chuyển hướng
+    # bình thường, nhưng chỉ tài khoản Admin/Developer/Tester đi qua được — người
+    # dùng thật bấm vào là gặp màn hình từ chối của Facebook. Không có ô này thì
+    # không cách nào vừa test được provider vừa giấu nó khỏi người dùng.
+    #
+    # Chỉ ảnh hưởng tới danh sách trả về cho giao diện; endpoint /login của
+    # provider vẫn hoạt động để còn test bằng URL trực tiếp.
+    oauth_hidden_providers: str = ""
+
     # Storage: "local" (dev) | "gcs" (production)
     storage_backend: str = "local"
     local_media_dir: str = "./media"

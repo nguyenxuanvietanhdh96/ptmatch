@@ -338,6 +338,41 @@ async def logout(body: RefreshRequest):
 # OAuth — Google
 # ---------------------------------------------------------------------------
 
+@router.get("/oauth/providers")
+async def list_oauth_providers(response: Response):
+    """Những provider giao diện NÊN hiện nút.
+
+    Trước đây frontend hiện cứng cả ba nút Google/Facebook/Zalo, trong khi
+    provider thiếu credential trả 503 — người dùng bấm vào rơi thẳng vào một
+    trang JSON lỗi trần, không thông báo, không đường quay lại, ngay tại bước
+    đăng ký. Luật thuộc về backend vì chính nó giữ credential; frontend chỉ hỏi
+    rồi vẽ.
+
+    `oauth_hidden_providers` lọc thêm một lần nữa cho trường hợp đã cấu hình
+    nhưng chưa mở cho công chúng (app Facebook chưa qua App Review).
+    """
+    hidden = {
+        name.strip().lower()
+        for name in settings.oauth_hidden_providers.split(",")
+        if name.strip()
+    }
+    configured = {
+        "google": settings.google_client_id,
+        "facebook": settings.facebook_client_id,
+        "zalo": settings.zalo_app_id,
+    }
+    providers = [
+        name
+        for name, credential in configured.items()
+        if credential and name not in hidden
+    ]
+    # Danh sách này đổi khi có người sửa .env rồi khởi động lại backend, tức là
+    # hiếm. Cho trình duyệt giữ 5 phút để trang đăng nhập không phải chờ thêm
+    # một vòng mạng nữa trước khi vẽ được nút.
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return {"providers": providers}
+
+
 @router.get("/google/login")
 async def google_login(
     role: str = Query(default="trainee", pattern="^(pt|trainee)$"),
