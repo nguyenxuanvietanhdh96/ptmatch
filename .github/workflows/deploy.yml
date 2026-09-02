@@ -123,6 +123,11 @@ jobs:
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
+    # Ba biến GCP_* nằm trong Environment "Prod" chứ không ở cấp repository, nên
+    # job phải khai báo environment thì `vars` mới đọc được — thiếu dòng này thì
+    # chúng rỗng và bước auth hỏng với thông báo khó lần. Đổi lại, GitHub ghi
+    # nhận đây là một lượt deploy vào Prod (có lịch sử, gắn được reviewer sau).
+    environment: Prod
     permissions:
       contents: read
       id-token: write   # bắt buộc: runner phải phát được OIDC token cho WIF
