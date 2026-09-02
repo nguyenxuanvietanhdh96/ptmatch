@@ -18,6 +18,9 @@ substitutions:
   _REPO: ptmatch
   # Thư mục chứa code trên GCE instance (setup-server.sh đã clone vào đây).
   _APP_DIR: /var/www/html/ptmatch
+  # Origin công khai để smoke test sau deploy. Phải khớp SITE_URL trong .env
+  # trên server, nếu không bước smoke sẽ kiểm nhầm một site khác.
+  _SITE_URL: https://ptmatch.vn
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -130,3 +133,46 @@ steps:
           --tunnel-through-iap \
           --command="cd ${_APP_DIR} && sudo IMAGE_TAG=$SHORT_SHA GCP_PROJECT_ID=$PROJECT_ID bash scripts/deploy.sh"
     waitFor: [push-backend, push-frontend]
+
+  # ---- 6. Smoke test từ ngoài Internet ---------------------------------------
+  # Health check trong deploy.sh gọi từ TRONG docker network, nên nó không nhìn
+  # thấy chứng chỉ TLS hết hạn, DNS trỏ sai, hay nginx chặn ở lớp ngoài — đúng
+  # những thứ chỉ hỏng ở phía người dùng thật. Bước này gọi từ Cloud Build,
+  # ngoài hẳn server, nên kiểm đủ cả chuỗi: DNS -> TLS -> nginx -> app.
+  #
+  # Kiểm cả trang Next (/) lẫn API (/api/health) vì nginx định tuyến hai đường
+  # đó tới hai upstream khác nhau; chỉ kiểm một cái thì hỏng cái còn lại vẫn xanh.
+  - id: smoke-test
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -uo pipefail
+
+        check() {
+          local path="$$1" code
+          # Thử lại vài lần: deploy.sh đã báo healthy, nhưng nginx vừa restart
+          # và kết nối đầu tiên từ ngoài có thể rơi vào đúng khoảnh khắc đó.
+          for attempt in 1 2 3 4 5; do
+            # Gán rồi mới xử lý lỗi: `|| echo 000` nối thêm vào chuỗi curl đã
+            # in ra ("000" + "000"), cho ra mã lỗi vô nghĩa đúng lúc đang đọc log.
+            code="$$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${_SITE_URL}$$path")" || code="000"
+            if [[ "$$code" == "200" ]]; then
+              echo "OK   ${_SITE_URL}$$path -> 200"
+              return 0
+            fi
+            echo "  thu lai ($$attempt/5): ${_SITE_URL}$$path -> $$code"
+            sleep 5
+          done
+          echo "LOI  ${_SITE_URL}$$path -> $$code (mong doi 200)" >&2
+          return 1
+        }
+
+        # Không dừng ở lỗi đầu tiên: biết CẢ HAI đường hỏng hay chỉ một đường
+        # hỏng là khác nhau về nguyên nhân, mà chạy lại build để biết thì đắt.
+        rc=0
+        check /            || rc=1
+        check /api/health  || rc=1
+        exit "$$rc"
+    waitFor: [deploy]
