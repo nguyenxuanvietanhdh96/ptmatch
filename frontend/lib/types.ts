@@ -429,3 +429,27 @@ export interface RequestClaimResult {
   /** Tổng số PT đã nhận, tính cả lần này. */
   claim_count: number;
 }
+
+export interface AdminPTItem {
+  slug: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
+  is_active: boolean;
+  suspended: boolean;
+  suspended_reason?: string | null;
+  banned: boolean;
+  ban_reason?: string | null;
+  deleted: boolean;
+  /** Yêu cầu còn thiếu để hồ sơ hiển thị công khai; rỗng = đủ. */
+  missing_listing: string[];
+  leads: number;
+  review_count: number;
+  created_at?: string | null;
+}
+
+export interface AdminPTList {
+  items: AdminPTItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}

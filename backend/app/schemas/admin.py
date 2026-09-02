@@ -235,3 +235,35 @@ class PTCloseRequest(BaseModel):
     """
 
     confirm_slug: str = Field(min_length=1, max_length=80)
+
+
+class AdminPTItem(BaseModel):
+    """Một hồ sơ PT dưới góc nhìn quản trị.
+
+    Cố ý CHỈ chứa thứ vốn đã công khai (tên, slug, ảnh, mức hoàn thiện) cộng
+    trạng thái xử lý. Không có email, không có số điện thoại: admin cần xử lý
+    một hồ sơ chứ không cần đọc thông tin liên hệ của chủ nó, và một trang liệt
+    kê PII là thứ chỉ cần lộ một lần.
+    """
+
+    slug: str
+    full_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_active: bool = True
+    suspended: bool = False
+    suspended_reason: Optional[str] = None
+    banned: bool = False
+    ban_reason: Optional[str] = None
+    deleted: bool = False
+    # Vì sao hồ sơ chưa hiển thị công khai (avatar/price/location), rỗng = đủ.
+    missing_listing: List[str] = []
+    leads: int = 0
+    review_count: int = 0
+    created_at: Optional[datetime] = None
+
+
+class AdminPTList(BaseModel):
+    items: List[AdminPTItem]
+    total: int
+    page: int
+    page_size: int

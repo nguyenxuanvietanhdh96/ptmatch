@@ -16,7 +16,7 @@ from datetime import timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Text, and_, case, func, select
+from sqlalchemy import Text, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
@@ -39,6 +39,8 @@ from app.models import (
 )
 from app.schemas.admin import (
     AdminOverview,
+    AdminPTItem,
+    AdminPTList,
     AdminReviewItem,
     AdminReviewList,
     AdminReviewModerate,
@@ -56,6 +58,7 @@ from app.schemas.admin import (
     PTSuspendResult,
 )
 from app.services.account_closure import ban_user, close_account, unban_user
+from app.services.listing import missing_listing_requirements
 from app.services.labels import specialty_label
 from app.services.rating import refresh_pt_rating
 
@@ -770,3 +773,81 @@ async def close_pt_account(
         old_slug or slug,
     )
     return _account_state(profile, owner)
+
+
+@router.get("/pts", response_model=AdminPTList)
+async def list_pt_profiles(
+    q: Optional[str] = Query(default=None, max_length=100),
+    include_closed: bool = Query(default=False),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mọi hồ sơ PT, để còn xử lý được hồ sơ chưa có lead lẫn đánh giá.
+
+    Các thao tác xử lý trước đây chỉ nằm trong trang Đánh giá và Đường ống lead,
+    nên chỉ với tới được PT đã có đánh giá hoặc đã nhận lead. Một PT vừa đăng ký
+    và đang làm phiền học viên qua kênh khác thì không xuất hiện ở đâu cả.
+
+    Mặc định ẩn tài khoản đã đóng: chúng đã khử danh tính nên chỉ làm dài danh
+    sách. `include_closed` để tra soát.
+    """
+    stmt = (
+        select(PTProfile, User)
+        .join(User, User.id == PTProfile.user_id)
+        .order_by(PTProfile.created_at.desc())
+    )
+    if not include_closed:
+        stmt = stmt.where(PTProfile.deleted_at.is_(None))
+    if q:
+        # Không dùng search_vector: admin thường dán một slug lấy từ báo cáo,
+        # hoặc gõ một phần tên. ILIKE trên hai cột đúng đủ cho quy mô này và
+        # không phụ thuộc vào cách tsvector tách từ.
+        like = "%{0}%".format(q.strip())
+        stmt = stmt.where(
+            or_(PTProfile.full_name.ilike(like), PTProfile.slug.ilike(like))
+        )
+
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = (
+        await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+    ).all()
+
+    # Số lead của từng hồ sơ trong một truy vấn, không phải một truy vấn mỗi
+    # dòng: 25 dòng là 25 lượt gọi DB nếu làm trong vòng lặp.
+    profile_ids = [p.id for p, _ in rows]
+    lead_counts: dict = {}
+    if profile_ids:
+        lead_rows = (
+            await db.execute(
+                select(Lead.pt_profile_id, func.count())
+                .where(Lead.pt_profile_id.in_(profile_ids))
+                .group_by(Lead.pt_profile_id)
+            )
+        ).all()
+        lead_counts = {pid: int(n) for pid, n in lead_rows}
+
+    return AdminPTList(
+        items=[
+            AdminPTItem(
+                slug=profile.slug,
+                full_name=profile.full_name,
+                avatar_url=profile.avatar_url,
+                is_active=profile.is_active,
+                suspended=profile.suspended_at is not None,
+                suspended_reason=profile.suspended_reason,
+                banned=owner.banned_at is not None,
+                ban_reason=owner.ban_reason,
+                deleted=owner.deleted_at is not None,
+                missing_listing=missing_listing_requirements(profile),
+                leads=lead_counts.get(profile.id, 0),
+                review_count=profile.review_count,
+                created_at=profile.created_at,
+            )
+            for profile, owner in rows
+        ],
+        total=int(total or 0),
+        page=page,
+        page_size=page_size,
+    )

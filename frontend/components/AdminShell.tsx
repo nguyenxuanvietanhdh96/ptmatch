@@ -24,6 +24,7 @@ import { getUser, isLoggedIn } from "@/lib/auth";
 const NAV = [
   { href: "/admin", label: "Tổng quan" },
   { href: "/admin/leads", label: "Đường ống lead" },
+  { href: "/admin/pts", label: "Hồ sơ PT" },
   { href: "/admin/reviews", label: "Đánh giá" },
   { href: "/admin/feedback", label: "Góp ý" },
 ];
