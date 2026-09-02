@@ -22,9 +22,9 @@ sẽ báo "hồ sơ đã hiển thị" trong khi truy vấn vẫn loại nó ra.
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Numeric, and_, case, func, select
+from sqlalchemy import Numeric, and_, case, func, or_, select
 
-from app.models import PTLocation, PTProfile
+from app.models import PTLocation, PTProfile, User
 
 # Khoá kỹ thuật -> nhãn hiển thị cho PT. Frontend đọc khoá, không đọc nhãn.
 LISTING_REQUIREMENT_LABELS: Dict[str, str] = {
@@ -50,6 +50,31 @@ def per_session_price_expr():
     )
 
 
+def _owner_blocked_exists():
+    """Chủ hồ sơ đã bị khoá hoặc đã đóng tài khoản.
+
+    Dùng truy vấn con tương quan thay vì bắt mọi nơi gọi phải join sang `users`:
+    hai mệnh đề dưới đây được dùng ở sáu chỗ với cấu trúc truy vấn khác nhau, và
+    "thêm một join" là thứ sẽ bị bỏ sót ở chỗ thứ bảy.
+
+    VÌ SAO khoá tài khoản phải ẩn hồ sơ: một tài khoản bị khoá không đăng nhập
+    được, nên hồ sơ của nó mà vẫn nhận lead thì học viên giao số điện thoại cho
+    một người không bao giờ thấy nó. Đó không phải vô dụng, đó là một lời hứa sẽ
+    có người gọi lại mà chắc chắn không xảy ra — tệ hơn việc không hiện hồ sơ.
+
+    Bản ghi lý do của đình chỉ và của khoá vẫn độc lập (bỏ khoá không tháo đình
+    chỉ đang có lý do riêng); chỉ HỆ QUẢ công khai là suy ra từ cả hai.
+    """
+    return (
+        select(User.id)
+        .where(
+            User.id == PTProfile.user_id,
+            or_(User.banned_at.is_not(None), User.deleted_at.is_not(None)),
+        )
+        .exists()
+    )
+
+
 def listable_clause():
     """Mệnh đề WHERE cho mọi chỗ liệt kê hồ sơ ra công khai."""
     return and_(
@@ -58,6 +83,7 @@ def listable_clause():
         # trang chủ cùng lúc, nếu không thì "đã xử lý" chỉ đúng ở một chỗ.
         PTProfile.suspended_at.is_(None),
         PTProfile.deleted_at.is_(None),
+        ~_owner_blocked_exists(),
         PTProfile.is_active.is_(True),
         func.coalesce(PTProfile.avatar_url, "") != "",
         per_session_price_expr() > 0,
@@ -87,6 +113,7 @@ def reachable_clause():
         PTProfile.is_active.is_(True),
         PTProfile.suspended_at.is_(None),
         PTProfile.deleted_at.is_(None),
+        ~_owner_blocked_exists(),
     )
 
 
