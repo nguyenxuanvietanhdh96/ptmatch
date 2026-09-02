@@ -140,7 +140,7 @@ jobs:
       # cần biết registry nào, và đường ghép Artifact Registry cũ không còn đúng.
       - name: Chạy deploy.sh qua IAP
         run: |
-          gcloud compute ssh "${{ vars.GCE_INSTANCE || 'ptmatch-prod' }}" \
+          gcloud compute ssh "${{ vars.GCE_INSTANCE || 'ptmatchapp' }}" \
             --zone "${{ vars.GCE_ZONE || 'asia-southeast1-b' }}" \
             --tunnel-through-iap \
             --quiet \

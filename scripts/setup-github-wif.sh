@@ -20,7 +20,10 @@ REPO="${GITHUB_REPO:-nguyenxuanvietanhdh96/ptmatch}"
 POOL="${WIF_POOL:-github}"
 PROVIDER="${WIF_PROVIDER:-ptmatch}"
 SA_NAME="${DEPLOY_SA_NAME:-ptmatch-deployer}"
-INSTANCE="${GCE_INSTANCE:-ptmatch-prod}"
+# Tên máy THẬT đang chạy production. Cố ý khác `ptmatch-${environment}` mà
+# infra/modules/compute/main.tf sinh ra: máy hiện tại được tạo tay trong VPC
+# default, terraform trong infra/ chưa từng được apply lên project này.
+INSTANCE="${GCE_INSTANCE:-ptmatchapp}"
 ZONE="${GCE_ZONE:-asia-southeast1-b}"
 # Nhánh được phép deploy. Ràng buộc này nằm ở provider, nên một workflow chạy
 # từ nhánh khác sẽ không đổi được token — kể cả khi ai đó sửa file workflow.
